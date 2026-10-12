@@ -19,7 +19,9 @@ SCAN_JS = r"""
   // ปุ่ม/ลิงก์ที่เป็นการเปิดเอกสาร
   const GOOD = /(pdf|พิมพ์|print|ดาวน์โหลด|download|ใบเสร็จ|receipt|ดูแบบ|ดูเอกสาร|เรียกดู|แสดงแบบ|view|visibility|description|e-?receipt|ใบรับ|ใบนำฝาก|pay\s?-?in|file|document)/i;
   // ไม่แตะ: ปุ่มที่เปลี่ยนข้อมูลบนเว็บ
-  const BAD  = /(ยื่นแบบ|ยื่นเพิ่มเติม|ยื่นภาษี|ส่งแบบ|ส่งข้อมูล|นำส่ง|ยืนยัน|ชำระ|จ่าย|ลบ|ยกเลิก|แก้ไข|บันทึก|อัปโหลด|อัพโหลด|แนบ|ออกจากระบบ|logout|log out|sign out|submit|confirm|delete|remove|\bpay\b|payment|upload|edit|save|cancel|สมัคร|เปลี่ยนรหัส|ลืมรหัส)/i;
+  const BADC = /(ยื่นแบบ|ยื่นเพิ่มเติม|ยื่นภาษี|ส่งแบบ|ส่งข้อมูล|นำส่ง|ยืนยัน|ลบ|ยกเลิก|แก้ไข|บันทึก|อัปโหลด|อัพโหลด|แนบ|ออกจากระบบ|logout|log out|sign out|submit|confirm|delete|remove|upload|edit|save|cancel|สมัคร|เปลี่ยนรหัส|ลืมรหัส)/i;
+  const BADP = /(ชำระ|จ่าย|\bpay\b|payment)/i, DOCW = /(ใบแจ้ง|ใบเสร็จ|ใบนำฝาก|pay\s?-?in|slip|receipt|พิมพ์|print|ดาวน์โหลด|download|pdf)/i;
+  const BAD = {test: t => BADC.test(t) || (BADP.test(t) && !DOCW.test(t))};
   // ไม่ใช่เอกสารภาษี: โปรแกรม คู่มือ แอป ข่าว
   const JUNK = /(\.exe|\.msi|\.zip|\.rar|\.dmg|\.apk|โปรแกรม|program|windows|32-?bit|64-?bit|rd ?prep|installer|คู่มือ|manual|แอป|app ?store|google ?play|ประกาศ|ข่าว|news|faq|คำถาม|แบบฟอร์ม(?!.*ยื่น)|ดาวน์โหลดแบบฟอร์ม)/i;
   // แถวที่เป็นรายการยื่นแบบ/ใบเสร็จ (ต้องมีชื่อแบบ หรือคำบ่งชี้)
@@ -110,6 +112,107 @@ SET_YEAR_JS = r"""
 """
 
 
+# --- ปุ่มเมนูท้ายแถว (⋮ / … / dropdown) ในแถวที่เป็นรายการยื่นแบบ (เช่น RD e-Filing ระบบใหม่)
+TOGGLES_JS = r"""
+(prefix) => {
+  const RECORD = /(ภ\.?\s?ง\.?\s?ด|ภ\.?\s?พ\.?\s?\d|ภ\.?\s?ธ\.?\s?\d|อ\.?\s?ส\.?\s?4|P\.?\s?N\.?\s?D|P\.?\s?P\.?\s?\d{2}|สปส|กท\.?\s?20|ส\.?\s?บ\.?\s?ช|บ\.?\s?อ\.?\s?จ|งบการเงิน)/i;
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const out = []; let n = 0; const seen = new Set();
+  const rows = document.querySelectorAll('tr, [role=row], mat-row, .mat-mdc-row, .row-item, .list-group-item, .card');
+  for (const row of rows) {
+    if (!vis(row)) continue;
+    const text = row.innerText.replace(/\s+/g, ' ').trim();
+    if (!RECORD.test(text) || text.length > 700) continue;
+    const btns = [...row.querySelectorAll('button, a, [role=button], [aria-haspopup], [data-toggle=dropdown], [data-bs-toggle=dropdown], .dropdown-toggle, [mat-icon-button], [ngbdropdowntoggle]')].filter(vis);
+    for (const b of btns) {
+      if (seen.has(b)) continue;
+      const t = (b.innerText || '').replace(/\s+/g, '').trim();
+      const cls = ((b.getAttribute('class') || '') + ' ' + [...b.querySelectorAll('*')].map(x => (x.getAttribute('class') || '') + ' ' + (x.tagName === 'MAT-ICON' ? x.innerText : '')).join(' ')).toLowerCase();
+      const isMenu = b.hasAttribute('aria-haspopup') || /dropdown|more|kebab|ellipsis|dots|menu|action|vert|option/.test(cls) ||
+                     /^(⋮|︙|…|\.\.\.|⋯|•••|more_vert|more_horiz)$/.test(t);
+      if (!isMenu) continue;
+      seen.add(b);
+      const id = prefix + (n++);
+      b.setAttribute('data-taxdocs-menu', id);
+      // แถวรายละเอียดถัดไป (ถ้าแถวนี้กางได้)
+      let extra = '';
+      const nx = row.nextElementSibling;
+      if (nx && vis(nx) && !RECORD.test(nx.innerText.slice(0, 40))) extra = nx.innerText.replace(/\s+/g, ' ').trim().slice(0, 300);
+      let head = '';
+      const table = row.closest('table, mat-table, [role=table], [role=grid]');
+      if (table) { const th = table.querySelector('thead tr, mat-header-row, [role=row]'); if (th && th !== row) head = th.innerText.replace(/\s+/g, ' ').trim().slice(0, 300); }
+      out.push({id, row: (text + ' ' + extra).trim().slice(0, 500), head});
+    }
+  }
+  return out;
+}
+"""
+
+MENU_ITEMS_JS = r"""
+() => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+  const sel = '[role=menuitem], [role=option], .dropdown-menu a, .dropdown-menu button, .dropdown-item, .mat-menu-item, .mat-mdc-menu-item, .cdk-overlay-container button, .cdk-overlay-container a, .cdk-overlay-container [role=button], .popover a, .popover button, .ant-dropdown-menu-item, .p-menuitem-link, ul.menu li a, .context-menu a, .context-menu button';
+  const items = [...document.querySelectorAll(sel)].filter(vis);
+  const out = [];
+  for (const it of items) {
+    const t = (it.innerText || it.getAttribute('aria-label') || it.title || '').replace(/\s+/g, ' ').trim();
+    if (t && t.length < 80 && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+"""
+
+CLICK_MENU_ITEM_JS = r"""
+(text) => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const sel = '[role=menuitem], [role=option], .dropdown-menu a, .dropdown-menu button, .dropdown-item, .mat-menu-item, .mat-mdc-menu-item, .cdk-overlay-container button, .cdk-overlay-container a, .cdk-overlay-container [role=button], .popover a, .popover button, .ant-dropdown-menu-item, .p-menuitem-link, ul.menu li a, .context-menu a, .context-menu button';
+  const it = [...document.querySelectorAll(sel)].filter(vis).find(e => norm(e.innerText || e.getAttribute('aria-label') || e.title) === text);
+  if (!it) return false;
+  it.click();
+  return true;
+}
+"""
+
+GOOD_MENU = re.compile(r"(pdf|พิมพ์|print|ดาวน์โหลด|download|ใบเสร็จ|receipt|ดูแบบ|ดูเอกสาร|เรียกดู|แสดงแบบ|view|ใบรับ|ใบนำฝาก|ใบแจ้ง|pay\s?-?in|แบบ\s?ภ|ภ\.?\s?ง\.?\s?ด|ภ\.?\s?พ)", re.I)
+BAD_CORE = re.compile(r"(ยื่นแบบ|ยื่นเพิ่มเติม|ยื่นภาษี|ส่งแบบ|ส่งข้อมูล|นำส่ง|ยืนยัน|ลบ|ยกเลิก|แก้ไข|บันทึก|อัปโหลด|อัพโหลด|แนบ|ออกจากระบบ|logout|submit|confirm|delete|remove|upload|edit|save|cancel|คำร้อง|ขอคืน)", re.I)
+BAD_PAY = re.compile(r"(ชำระ|จ่าย|\bpay\b|payment)", re.I)
+DOC_WORDS = re.compile(r"(ใบแจ้ง|ใบเสร็จ|ใบนำฝาก|pay\s?-?in|slip|receipt|พิมพ์|print|ดาวน์โหลด|download|pdf)", re.I)
+
+
+def is_bad(text):
+    """ปุ่มที่เปลี่ยนข้อมูลบนเว็บ — ไม่แสดงและไม่กด ('พิมพ์ใบแจ้งชำระ' เป็นเอกสาร ไม่ใช่การจ่ายเงิน)"""
+    if BAD_CORE.search(text):
+        return True
+    return bool(BAD_PAY.search(text)) and not DOC_WORDS.search(text)
+
+
+def _close_menu(page):
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+    except Exception:
+        pass
+
+
+def _menu_items(frame, toggle_id, page):
+    """กดปุ่ม ⋮ แล้วอ่านรายการในเมนู"""
+    loc = frame.locator(f'[data-taxdocs-menu="{toggle_id}"]')
+    if loc.count() == 0:
+        return []
+    loc.first.scroll_into_view_if_needed(timeout=4000)
+    loc.first.click(timeout=6000)
+    page.wait_for_timeout(500)
+    texts = []
+    for f in [frame] + [x for x in page.frames if x is not frame]:
+        try:
+            texts += [t for t in f.evaluate(MENU_ITEMS_JS) if t not in texts]
+        except Exception:
+            pass
+    _close_menu(page)
+    return [t for t in texts if GOOD_MENU.search(t) and not is_bad(t)]
+
+
 BLOB_SRC_JS = r"""
 () => [...document.querySelectorAll('iframe, embed, object')]
   .map(e => e.src || e.data || '')
@@ -156,6 +259,8 @@ def describe(item, year_be):
     period = ""
     if info["year"]:
         period = str(info["year"]) + (f"-{info['month']:02d}" if info["month"] and not info["annual"] else "")
+        if info["guessed"]:
+            period = "~" + period      # เดาจากวันที่ในแถว (เช่น วันที่ยื่น) — ระบบจะอ่านงวดจริงจาก PDF อีกครั้ง
     return {
         "form": info["form"], "agency": info["agency"], "kind": kind, "period": period,
         "match": row_matches_year(text, year_be) or (info["year"] == int(year_be)),
@@ -202,6 +307,30 @@ def scan_pages(ctx, year_be, set_year, refs, log):
                 it.update(describe(it, year_be))
                 refs[it["id"]] = f
                 results.append(it)
+    # เมนูท้ายแถว (⋮): กดเปิดทีละแถว อ่านรายการเอกสาร แล้วปิด
+    n_menu = 0
+    for pi, p in enumerate(pages):
+        for fi, f in enumerate(p.frames):
+            try:
+                toggles = f.evaluate(TOGGLES_JS, f"tm{stamp}_{pi}_{fi}_")
+            except Exception:
+                continue
+            for tg in toggles[:60]:
+                try:
+                    labels = _menu_items(f, tg["id"], p)
+                except Exception:
+                    _close_menu(p)
+                    continue
+                for li, lab in enumerate(labels):
+                    it = {"id": f"{tg['id']}m{li}", "label": lab, "href": "", "onclick": "", "row": tg["row"],
+                          "head": tg.get("head", ""), "isPdf": False, "tag": "menu",
+                          "menu": {"toggle": tg["id"], "text": lab},
+                          "page_url": p.url, "page_title": ""}
+                    it.update(describe(it, year_be))
+                    refs[it["id"]] = f
+                    results.append(it)
+                    n_menu += 1
+    info["menus"] = n_menu
     # ตัดรายการซ้ำ (ลิงก์เดียวกันในแถวเดียวกัน)
     uniq, seen = [], set()
     for it in results:
@@ -241,11 +370,30 @@ def fetch(ctx, frame, item, keep, counter, log):
     before = counter["n"]
     counter["hint"], counter["meta"] = hint, meta
     try:
-        loc = frame.locator(f'[data-taxdocs-id="{item["id"]}"]')
-        if loc.count() == 0:
-            return False, "หาไม่พบในหน้าเว็บ (หน้าเปลี่ยนไปแล้ว) — กดค้นหาใหม่"
-        loc.first.scroll_into_view_if_needed(timeout=5000)
-        loc.first.click(timeout=10000)
+        if item.get("menu"):
+            tog = frame.locator(f'[data-taxdocs-menu="{item["menu"]["toggle"]}"]')
+            if tog.count() == 0:
+                return False, "หาไม่พบในหน้าเว็บ (หน้าเปลี่ยนไปแล้ว) — กดค้นหาใหม่"
+            tog.first.scroll_into_view_if_needed(timeout=5000)
+            tog.first.click(timeout=8000)
+            frame.page.wait_for_timeout(500)
+            clicked = False
+            for f in [frame] + [x for x in frame.page.frames if x is not frame]:
+                try:
+                    if f.evaluate(CLICK_MENU_ITEM_JS, item["menu"]["text"]):
+                        clicked = True
+                        break
+                except Exception:
+                    pass
+            if not clicked:
+                _close_menu(frame.page)
+                return False, "ไม่พบรายการในเมนู — กดค้นหาใหม่"
+        else:
+            loc = frame.locator(f'[data-taxdocs-id="{item["id"]}"]')
+            if loc.count() == 0:
+                return False, "หาไม่พบในหน้าเว็บ (หน้าเปลี่ยนไปแล้ว) — กดค้นหาใหม่"
+            loc.first.scroll_into_view_if_needed(timeout=5000)
+            loc.first.click(timeout=10000)
     except Exception as e:
         counter["hint"], counter["meta"] = "", None
         return False, f"กดปุ่มไม่ได้: {str(e).splitlines()[0][:80]}"

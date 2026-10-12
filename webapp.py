@@ -179,7 +179,7 @@ def add_item(path, orig, source, company_hint, owned, hint="", meta=None):
             f = next((f for f in td.FORMS if f["code"] == meta["form"]), None)
             if f:
                 info.update(form=f["code"], agency=f["agency"], annual=f["annual"])
-        if (not info["year"] or info["guessed"]) and meta.get("period"):
+        if (not info["year"] or info["guessed"]) and meta.get("period") and not meta["period"].startswith("~"):
             r = td.parse_period(meta["period"])
             if r:
                 info["year"], info["month"] = r
