@@ -195,6 +195,37 @@ def _close_menu(page):
         pass
 
 
+MENU_OPEN_JS = r"""
+() => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  return [...document.querySelectorAll('[role=menuitem], .dropdown-menu.show, .mat-menu-panel, .mat-mdc-menu-panel, .cdk-overlay-container .mat-menu-item, .cdk-overlay-container [role=menu] *, .ant-dropdown:not(.ant-dropdown-hidden)')].some(vis);
+}
+"""
+
+CLICK_NEUTRAL_JS = r"""
+() => { const th = document.querySelector('thead th, mat-header-cell, [role=columnheader], h1, h2'); if (th) { th.dispatchEvent(new MouseEvent('mousedown', {bubbles: true})); th.click(); return true; } return false; }
+"""
+
+
+def _ensure_menu_closed(frame, page, toggle_id=None):
+    """ปิดเมนู ⋮ ให้แน่ใจ (บางเว็บไม่ปิดด้วย Esc) ไม่ให้บังปุ่มของแถวถัดไป"""
+    _close_menu(page)
+    for attempt in range(2):
+        try:
+            if not any(f.evaluate(MENU_OPEN_JS) for f in page.frames):
+                return
+        except Exception:
+            return
+        try:
+            if attempt == 0 and toggle_id:
+                frame.locator(f'[data-taxdocs-menu="{toggle_id}"]').first.click(timeout=3000, force=True)
+            else:
+                frame.evaluate(CLICK_NEUTRAL_JS)
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+
 def _menu_items(frame, toggle_id, page):
     """กดปุ่ม ⋮ แล้วอ่านรายการในเมนู"""
     loc = frame.locator(f'[data-taxdocs-menu="{toggle_id}"]')
@@ -209,7 +240,7 @@ def _menu_items(frame, toggle_id, page):
             texts += [t for t in f.evaluate(MENU_ITEMS_JS) if t not in texts]
         except Exception:
             pass
-    _close_menu(page)
+    _ensure_menu_closed(frame, page, toggle_id)
     return [t for t in texts if GOOD_MENU.search(t) and not is_bad(t)]
 
 
@@ -273,24 +304,55 @@ async (since) => {
 NEXT_JS = r"""
 () => {
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const norm = s => (s || '').replace(/\s+/g, '').trim();
   document.querySelectorAll('[data-taxdocs-next]').forEach(e => e.removeAttribute('data-taxdocs-next'));
-  const box = '.pagination, mat-paginator, .mat-paginator, .mat-mdc-paginator, .pager, [class*=paginat], [class*=pager], .p-paginator, nav, ul, .dataTables_paginate, [role=navigation]';
-  const cands = [...document.querySelectorAll('button, a, [role=button], li.next, .page-item.next')].filter(vis)
-                .filter(e => !e.closest('tr, [role=row], mat-row, header, .navbar, .cdk-overlay-container'));
+  const cands = [...document.querySelectorAll('button, a, [role=button], li, span[class*=page], div[class*=page]')].filter(vis)
+                .filter(e => !e.closest('tbody tr, [role=row], mat-row, header, .navbar, .cdk-overlay-container'));
+  const meta = e => [e, e.parentElement, ...e.querySelectorAll('*')].filter(Boolean)
+                     .map(x => (x.getAttribute('class') || '') + ' ' + (x.getAttribute('aria-label') || '') + ' ' + (x.title || '') + ' ' + (x.tagName === 'MAT-ICON' || /icon/i.test(x.className || '') ? x.innerText : '')).join(' ');
+  const disabled = e => e.disabled || e.getAttribute('aria-disabled') === 'true' || /\bdisabled\b/.test(e.className || '') ||
+                        (e.closest('li') && /\bdisabled\b/.test(e.closest('li').className)) || (e.parentElement && /\bdisabled\b/.test(e.parentElement.className || ''));
   const isNext = e => {
-    const t = (e.innerText || '').replace(/\s+/g, '').trim();
-    const a = ((e.getAttribute('aria-label') || '') + ' ' + (e.title || '') + ' ' + (e.getAttribute('class') || '') + ' ' +
-               [...e.querySelectorAll('*')].map(x => (x.getAttribute('class') || '') + ' ' + (x.tagName === 'MAT-ICON' ? x.innerText : '')).join(' '));
-    if (/(last|สุดท้าย|prev|ก่อน|first|แรก)/i.test(a) && !/next|ถัดไป/i.test(a)) return false;
-    return /^(›|»|>|ถัดไป|next|หน้าถัดไป|→|chevron_right|navigate_next|keyboard_arrow_right)$/i.test(t) || /(next|ถัดไป|chevron-right|angle-right|arrow-right)/i.test(a);
+    const t = norm(e.innerText);
+    if (t.length > 20) return false;
+    const a = meta(e);
+    if (/(last|สุดท้าย|prev|ก่อนหน้า|first|แรก|double)/i.test(a) && !/(next|ถัดไป)/i.test(a)) return false;
+    return /^(›|»|>|ถัดไป|หน้าถัดไป|next|nextpage|→|chevron_right|navigate_next|keyboard_arrow_right|>>)$/i.test(t) ||
+           /(pagination-next|page-next|next-page|\bnext\b|ถัดไป|chevron-right|angle-right|arrow-right|navigate_next)/i.test(a);
   };
-  const el = cands.find(e => isNext(e) && e.closest(box));
-  if (!el) return null;
-  const li = el.closest('li');
-  const dis = el.disabled || el.getAttribute('aria-disabled') === 'true' || /\bdisabled\b/.test(el.className) || (li && /\bdisabled\b/.test(li.className));
-  if (dis) return null;
-  el.setAttribute('data-taxdocs-next', '1');
-  return true;
+  // 1) ปุ่ม "ถัดไป"
+  const nxt = cands.filter(isNext);
+  for (const el of nxt) {
+    if (disabled(el)) return {how: 'next-disabled', html: el.outerHTML.slice(0, 160)};
+    const click = el.matches('a, button, [role=button]') ? el : (el.querySelector('a, button, [role=button]') || el);
+    click.setAttribute('data-taxdocs-next', '1');
+    return {how: 'next', html: click.outerHTML.slice(0, 160)};
+  }
+  // 2) เลขหน้า: หน้าปัจจุบัน (active) → กดเลขถัดไป
+  const nums = cands.filter(e => /^\d{1,3}$/.test(norm(e.innerText)) && e.closest('[class*=pagin], [class*=pager], nav, ul'));
+  const cur = nums.find(e => /\b(active|current|selected)\b/.test((e.className || '') + ' ' + ((e.closest('li') || {}).className || '')) || e.getAttribute('aria-current'));
+  if (cur) {
+    const want = parseInt(norm(cur.innerText), 10) + 1;
+    const n = nums.find(e => parseInt(norm(e.innerText), 10) === want);
+    if (n) { const click = n.matches('a, button') ? n : (n.querySelector('a, button') || n); click.setAttribute('data-taxdocs-next', '1'); return {how: 'number', html: click.outerHTML.slice(0, 160)}; }
+    return {how: 'last-number'};
+  }
+  const pag = [...document.querySelectorAll('[class*=pagin], [class*=pager], mat-paginator, nav')].filter(vis).map(e => norm(e.innerText).slice(0, 80)).filter(Boolean);
+  return {how: 'none', pag: pag.slice(0, 3)};
+}
+"""
+
+# --- ปุ่ม "แสดงเพิ่มเติม" / โหลดเพิ่มเมื่อเลื่อนลง
+MORE_JS = r"""
+() => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const b = [...document.querySelectorAll('button, a, [role=button]')].filter(vis)
+            .find(e => /^(แสดงเพิ่มเติม|ดูเพิ่มเติม|โหลดเพิ่ม|โหลดเพิ่มเติม|แสดงทั้งหมด|ดูทั้งหมด|load more|show more|more)$/i.test((e.innerText || '').trim()));
+  if (b) { b.click(); return 'more'; }
+  const sc = document.scrollingElement || document.body;
+  const before = sc.scrollTop; sc.scrollTop = sc.scrollHeight;
+  for (const el of document.querySelectorAll('.table-responsive, .mat-table-container, cdk-virtual-scroll-viewport, [class*=scroll]')) el.scrollTop = el.scrollHeight;
+  return sc.scrollTop !== before ? 'scroll' : '';
 }
 """
 
@@ -420,7 +482,48 @@ MODAL_JS = r"""
 
 
 PREMARK_JS = r"""
-() => { document.querySelectorAll('button, a, [role=button], input[type=button]').forEach(b => b.setAttribute('data-taxdocs-pre', '1')); return true; }
+() => {
+  // จำเฉพาะปุ่มที่ "มองเห็นอยู่" ก่อนกด (กล่องของเว็บมักซ่อนรออยู่ในหน้า — ปุ่มในกล่องที่ซ่อนต้องไม่ถูกนับว่าเก่า)
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  document.querySelectorAll('[data-taxdocs-pre]').forEach(b => b.removeAttribute('data-taxdocs-pre'));
+  document.querySelectorAll('button, a, [role=button], input[type=button]').forEach(b => { if (vis(b)) b.setAttribute('data-taxdocs-pre', '1'); });
+  return true;
+}
+"""
+
+# ปิดกล่องที่เว็บเปิดค้าง (ปุ่ม ปิด/Close/× ที่เพิ่งปรากฏ ในกล่องที่ลอยอยู่)
+CLOSE_OVERLAY_JS = r"""
+() => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const floating = e => { for (let a = e; a && a !== document.body; a = a.parentElement) { const st = getComputedStyle(a); if (st.position === 'fixed' || (st.position === 'absolute' && parseInt(st.zIndex || '0', 10) > 10)) return true; } return false; };
+  let n = 0;
+  for (const b of document.querySelectorAll('button, a, [role=button], input[type=button]')) {
+    if (b.hasAttribute('data-taxdocs-pre') || !vis(b)) continue;
+    const t = (b.innerText || b.value || '').replace(/\s+/g, '').trim();
+    if ((/^(ปิด|close|×|✕|x)$/i.test(t) || /close|ปิด/i.test(b.getAttribute('aria-label') || '')) && floating(b)) { b.click(); n++; }
+  }
+  return n;
+}
+"""
+
+
+# สิ่งที่ลอยอยู่บนหน้าจอ (กล่อง/ป๊อปอัป/แจ้งเตือน) — บันทึกไว้ช่วยวิเคราะห์
+OVERLAYS_JS = r"""
+() => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 20 && r.height > 20 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+  const out = [];
+  for (const e of document.querySelectorAll('body *')) {
+    const st = getComputedStyle(e);
+    if (!(st.position === 'fixed' || (st.position === 'absolute' && parseInt(st.zIndex || '0', 10) >= 100))) continue;
+    if (!vis(e)) continue;
+    const t = (e.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length < 2) continue;
+    if (out.some(o => o.t.includes(t))) continue;
+    out.push({t: t.slice(0, 220), c: (e.className && e.className.baseVal === undefined ? String(e.className) : '').slice(0, 60), tag: e.tagName.toLowerCase()});
+    if (out.length >= 6) break;
+  }
+  return out;
+}
 """
 
 
@@ -550,16 +653,41 @@ def max_page_size(page, frame, log=None):
         pass
 
 
-def next_page(page, frame):
+def next_page(page, frame, diag=None):
     """กดไปหน้าถัดไปของตาราง คืน True ถ้าเปลี่ยนหน้าได้"""
     try:
-        if not frame.evaluate(NEXT_JS):
+        r = frame.evaluate(NEXT_JS) or {}
+        if diag is not None:
+            diag.append(f"ปุ่มหน้าถัดไป: {r.get('how')} {r.get('html', '') or r.get('pag', '')}")
+        if r.get("how") not in ("next", "number"):
             return False
         before = frame.evaluate(TABLE_SIG_JS)
         frame.locator('[data-taxdocs-next="1"]').first.click(timeout=6000)
-        return _wait_change(page, frame, before)
-    except Exception:
+        ok = _wait_change(page, frame, before)
+        if diag is not None and not ok:
+            diag.append("กดหน้าถัดไปแล้วแต่ตารางไม่เปลี่ยน")
+        return ok
+    except Exception as e:
+        if diag is not None:
+            diag.append(f"กดหน้าถัดไปไม่ได้: {str(e).splitlines()[0][:80]}")
         return False
+
+
+def load_all_rows(page, frame, diag=None):
+    """กด 'แสดงเพิ่มเติม' / เลื่อนลงจนรายการไม่เพิ่ม (ตารางที่โหลดเพิ่มทีละช่วง)"""
+    for i in range(30):
+        try:
+            before = frame.evaluate(TABLE_SIG_JS)
+            how = frame.evaluate(MORE_JS)
+            if not how:
+                return
+            page.wait_for_timeout(700)
+            if not _wait_change(page, frame, before, timeout=3):
+                return
+            if diag is not None:
+                diag.append(f"โหลดรายการเพิ่ม ({how}) ครั้งที่ {i + 1}")
+        except Exception:
+            return
 
 
 def _scan_one(ctx, page, rng, refs, info, stamp, pg, progress):
@@ -620,7 +748,7 @@ def _scan_one(ctx, page, rng, refs, info, stamp, pg, progress):
     return out
 
 
-def scan_pages(ctx, rng, set_year, refs, log, pages=None, progress=None, max_pages=40):
+def scan_pages(ctx, rng, set_year, refs, log, pages=None, progress=None, max_pages=60, debug=None, debug_dir=None):
     """อ่านตารางในหน้าเว็บให้ครบทุกหน้า คืนรายการเอกสาร
     rng = ((ปี,เดือน),(ปี,เดือน)) ช่วงเดือนภาษีที่ต้องการ; refs[id] = frame สำหรับดาวน์โหลดภายหลัง"""
     progress = progress or (lambda m: None)
@@ -641,23 +769,37 @@ def scan_pages(ctx, rng, set_year, refs, log, pages=None, progress=None, max_pag
     stamp = str(int(time.time() * 1000) % 10_000_000)
     info = {"pages": [], "junk": 0, "login": False, "menus": 0, "rows": 0, "out_of_range": 0,
             "rows_out": [], "table_pages": 0}
+    diag = []
     for p in pages:
-        max_page_size(p, p.main_frame, log)
+        max_page_size(p, p.main_frame, lambda m: (log(m), diag.append(m)))
         pg = 1
         while True:
             progress(f"กำลังอ่านหน้า {pg}…")
+            load_all_rows(p, p.main_frame, diag)
+            rows_before = info["rows"]
             found = _scan_one(ctx, p, rng, refs, info, stamp, pg, progress)
             results += found
             info["table_pages"] = max(info["table_pages"], pg)
-            # ตารางเรียงจากใหม่ไปเก่า: ถ้าทั้งหน้าเก่ากว่าช่วงที่เลือก ไม่ต้องอ่านหน้าถัดไป
-            olds = [ym(x) for x in info["rows_out"][-30:] if x]
-            if rng and info["rows"] and olds and len(found) == 0 and all(o and o < (rng[0][0], rng[0][1]) for o in olds):
-                log(f"หยุดที่หน้า {pg} — รายการถัดไปเก่ากว่าช่วงที่เลือก")
+            diag.append(f"หน้า {pg}: {info['rows'] - rows_before} แถว, ได้ {len(found)} รายการในช่วง")
+            if pg >= max_pages:
                 break
-            if pg >= max_pages or not next_page(p, p.main_frame):
+            if not next_page(p, p.main_frame, diag):
                 break
             pg += 1
         p._taxdocs_pg = pg            # จำหน้าปัจจุบันไว้ (ใช้ตอนดาวน์โหลด)
+        if debug:
+            shot = ""
+            try:
+                if debug_dir:
+                    debug_dir.mkdir(exist_ok=True)
+                    p.evaluate("(document.scrollingElement||document.body).scrollTop=1e9")
+                    p.wait_for_timeout(300)
+                    shot = str(debug_dir / "scan_bottom.jpg")
+                    p.screenshot(path=shot, type="jpeg", quality=70)
+            except Exception:
+                shot = ""
+            debug([f"[ค้นหา] {p.url[:100]} | ช่วง {rng}"] + [f"   {d}" for d in diag] +
+                  [f"   รวม {pg} หน้า, {info['rows']} แถว, ข้ามนอกช่วง {info['out_of_range']}" + (f" (ภาพ: {shot})" if shot else ""), ""])
     uniq, seen = [], set()
     for it in results:
         key = (it["href"] or "", it["row"][:120], it["label"], it.get("pg"))
@@ -715,7 +857,7 @@ def _ext(data):
     return ""
 
 
-def fetch(ctx, frame, item, keep, counter, log, debug=None):
+def fetch(ctx, frame, item, keep, counter, log, debug=None, debug_dir=None):
     """ดาวน์โหลดรายการเดียว คืน (สำเร็จ?, ข้อความ)"""
     hint = item["row"]
     meta = {"kind": item["kind"], "form": item["form"], "period": item["period"]}
@@ -771,8 +913,28 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             except Exception:
                 pass
         counter["hint"], counter["meta"] = "", None
+        overlay_txt, shot = "", ""
+        if debug and not ok:
+            try:
+                ov = page.evaluate(OVERLAYS_JS)
+                overlay_txt = " || ".join(f"<{o['tag']} {o['c']}> {o['t']}" for o in ov) or "-"
+            except Exception:
+                overlay_txt = "?"
+            try:
+                if debug_dir:
+                    debug_dir.mkdir(exist_ok=True)
+                    shot = str(debug_dir / "last_fail.jpg")
+                    page.screenshot(path=shot, type="jpeg", quality=70)
+            except Exception:
+                shot = ""
+        for f_ in page.frames:                    # ปิดกล่องที่ยังค้างอยู่ (หลังถ่ายภาพไว้แล้ว)
+            try:
+                f_.evaluate(CLOSE_OVERLAY_JS)
+            except Exception:
+                pass
         if debug and not ok:
             debug([f"รายการ: {item['label']} | แถว: {item['row'][:120]}",
+                   f"บนหน้าจอหลังกด: {overlay_txt}" + (f" (ภาพ: {shot})" if shot else ""),
                    f"หน้าใหม่ที่เปิด: {[p.url[:100] for p in new_pages] or '-'}",
                    f"สั่งพิมพ์ (window.print): {'ใช่' if printed else 'ไม่'}",
                    f"กล่องเลือกรายการ: {' / '.join(modal_log) if modal_log else 'ไม่พบ'}",

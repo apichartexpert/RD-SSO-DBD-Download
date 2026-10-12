@@ -906,7 +906,8 @@ def api_scan():
                 pages = [page]
                 SESSION.scan["hist"] = hist or page.url
             items = scanner.scan_pages(ctx, rng, bool(d.get("set_year")), SCAN_REFS, msgs.append, pages=pages,
-                                       progress=lambda m: SESSION.scan.update(msg=m))
+                                       progress=lambda m: SESSION.scan.update(msg=m),
+                                       debug=debug_write, debug_dir=DEBUG_LOG.parent)
         except Exception as e:
             SESSION.scan.update(state="idle", msg=f"ค้นหาไม่สำเร็จ: {str(e).splitlines()[0]}")
             return
@@ -975,7 +976,8 @@ def api_scan_download():
                         it["status"], it["note"] = "failed", "ไปหน้าที่มีรายการนี้ไม่ได้ — กดค้นหาใหม่"
                         continue
                 good, note = scanner.fetch(ctx, frame, it, SESSION._keep, SESSION._counter,
-                                           lambda m: SESSION.scan.update(msg=m), debug=debug_write)
+                                           lambda m: SESSION.scan.update(msg=m), debug=debug_write,
+                                           debug_dir=DEBUG_LOG.parent)
             except Exception as e:
                 good, note = False, str(e).splitlines()[0][:100]
             it["status"], it["note"] = ("done" if good else "failed"), note
