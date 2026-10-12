@@ -250,6 +250,7 @@ td.path2{word-break:break-all;color:var(--muted)}
         <button class="sm" title="ย้อนกลับ" onclick="vNav('back')">←</button>
         <button class="sm" title="ไปข้างหน้า" onclick="vNav('forward')">→</button>
         <button class="sm" title="โหลดใหม่" onclick="vNav('reload')">⟳</button>
+        <button class="sm primary" id="vHist" onclick="vHistory()" style="display:none"></button>
         <input type="text" class="vurl" id="vurl" spellcheck="false" onfocus="editing=true" onblur="editing=false"
                onkeydown="if(event.key==='Enter'){vNav('go',this.value);this.blur()}">
       </div>
@@ -266,7 +267,7 @@ td.path2{word-break:break-all;color:var(--muted)}
         <div class="finder" id="finder">
           <h3>ค้นหาแบบและใบเสร็จอัตโนมัติ</h3>
           <ol class="steps">
-            <li>ล็อกอินในส่วนเว็บไซต์ด้านบน แล้วเข้า <b>หน้าประวัติการยื่นแบบ / พิมพ์ใบเสร็จ</b> ให้เห็นตารางรายการ</li>
+            <li>ล็อกอินในส่วนเว็บไซต์ด้านบน (RD: โปรแกรมพาไปหน้า <b>ตรวจสอบผลการยื่นแบบ</b> ให้เอง · SSO/DBD: เข้าหน้าประวัติให้เห็นตารางรายการ)</li>
             <li>เลือกปี แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมจะอ่านรายการแบบและใบเสร็จในหน้านั้นมาให้เลือก</li>
             <li>ติ๊กรายการที่ต้องการ แล้วกด <b>ดาวน์โหลดที่เลือก</b></li>
           </ol>
@@ -396,7 +397,10 @@ function renderPortals(){
       <div class="pd">${esc(p.desc)}</div>
       <div class="pl">${esc(p.login)}<br><a href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.preventDefault();openPortal('${k}')">${esc(p.url)}</a>
         · <button class="linkbtn" onclick="$('pc-${k}').classList.toggle('editing')">แก้ลิงก์</button></div>
-      <div class="edit"><input type="text" id="url-${k}" value="${esc(p.url)}" spellcheck="false"><button class="sm" onclick="saveUrl('${k}')">บันทึก</button></div>
+      <div class="edit" style="flex-direction:column;align-items:stretch">
+        <small>หน้าเข้าสู่ระบบ</small><input type="text" id="url-${k}" value="${esc(p.url)}" spellcheck="false">
+        <small>หน้า${esc(p.history_name)} (ที่มีรายการแบบ/ใบเสร็จ)</small><input type="text" id="hist-${k}" value="${esc(p.history||"")}" placeholder="วางลิงก์จากช่องที่อยู่เว็บ" spellcheck="false">
+        <button class="sm" onclick="saveUrl('${k}')">บันทึก</button></div>
       <div class="go"><button class="pgo" onclick="openPortal('${k}')">เปิดเว็บไซต์เพื่อเข้าสู่ระบบ →</button></div>
     </div>`).join("");
 }
@@ -408,7 +412,8 @@ async function openPortal(k){
 }
 async function saveUrl(k){
   const urls={};Object.keys(S.portal_info).forEach(x=>urls[x]=x===k?$("url-"+k).value.trim():S.portal_info[x].url);
-  await saveCfg({portal_urls:urls});renderPortals();toast("บันทึกลิงก์แล้ว");
+  const hist={};Object.keys(S.portal_info).forEach(x=>hist[x]=x===k?$("hist-"+k).value.trim():(S.portal_info[x].history||""));
+  await saveCfg({portal_urls:urls,history_urls:hist});renderPortals();toast("บันทึกลิงก์แล้ว");
 }
 async function setOutTyped(){
   const v=$("outPath").value.trim();
@@ -598,11 +603,13 @@ async function vState(){
   $("vtabs").innerHTML=(V.tabs||[]).map(t=>`<div class="vtab ${t.active?"on":""}" title="${esc(t.url)}" onclick="vSend({t:'tab',i:${t.i}})"><span>${esc(t.title||t.url)}</span>${(V.tabs.length>1)?`<b title="ปิดแท็บ" onclick="event.stopPropagation();vSend({t:'closetab',i:${t.i}})">×</b>`:""}</div>`).join("");
   if(document.activeElement!==$("vurl"))$("vurl").value=V.url||"";
   $("vFill").disabled=!V.portal; $("vRemember").disabled=!V.portal;
+  $("vHist").style.display=V.history_url?"":"none"; $("vHist").textContent=V.history_name?("ไปหน้า"+V.history_name):"";
   $("vFill").title=V.has_login?"กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ของ "+V.portal_name:"ยังไม่ได้จำล็อกอินของเว็บนี้";
   const dg=V.dialog;
   $("vdlg").classList.toggle("on",!!dg);
   if(dg){$("vdlgMsg").textContent=dg.message;$("vdlgIn").style.display=dg.type==="prompt"?"":"none";$("vdlgNo").style.display=dg.type==="alert"?"none":""}
 }
+function vHistory(){if(V.history_url)vNav("go",V.history_url)}
 function vNav(what,url){vSend({t:"nav",what,url});kb.focus()}
 async function vDialog(ok){await api("/api/view/dialog",{accept:ok,text:$("vdlgIn").value});$("vdlg").classList.remove("on")}
 async function vAutofill(){try{const r=await api("/api/view/autofill",{});toast(r.msg)}catch(e){}}

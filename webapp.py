@@ -68,6 +68,7 @@ DEFAULT_CFG = {
     "browser_mode": "embedded",      # embedded = แสดงเว็บในหน้าโปรแกรม, window = หน้าต่างแยก
     "auto_fill": True,               # กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ให้อัตโนมัติ
     "portal_urls": {},
+    "history_urls": {},
     "config_version": 2,
 }
 
@@ -76,16 +77,25 @@ PORTAL_INFO = {
     "rd": {"name": "กรมสรรพากร", "short": "RD",
            "desc": "ภ.ง.ด.1, 3, 53, 54, 50, 51 · ภ.พ.30, 36 · ใบเสร็จรับเงิน",
            "login": "ล็อกอินด้วยบัญชี RD e-Filing / Digital ID",
-           "url": "https://efiling.rd.go.th"},
+           "url": "https://efiling.rd.go.th",
+           "history": "https://efiling.rd.go.th/rd-efiling-web/form-status",
+           "history_name": "ตรวจสอบผลการยื่นแบบ"},
     "sso": {"name": "สำนักงานประกันสังคม", "short": "SSO",
             "desc": "สปส.1-10 · กท.20ก · ใบเสร็จรับเงินสมทบ",
             "login": "ล็อกอินด้วยชื่อผู้ใช้ e-Service นายจ้าง",
-            "url": "https://www.sso.go.th/eservices/esv/login.do"},
+            "url": "https://www.sso.go.th/eservices/esv/login.do",
+            "history": "", "history_name": "ประวัติการยื่นเงินสมทบ"},
     "dbd": {"name": "กรมพัฒนาธุรกิจการค้า", "short": "DBD",
             "desc": "งบการเงิน · ส.บช.3 · บอจ.5 (รายชื่อผู้ถือหุ้น)",
             "login": "ล็อกอินด้วยชื่อผู้ใช้ DBD e-Filing",
-            "url": "https://efiling.dbd.go.th"},
+            "url": "https://efiling.dbd.go.th",
+            "history": "", "history_name": "ประวัติการนำส่ง"},
 }
+
+
+def history_url(key):
+    """หน้าที่มีรายการแบบ/ใบเสร็จ (เช่น RD: ตรวจสอบผลการยื่นแบบ) — แก้ได้ในหน้าเว็บ"""
+    return (CFG.get("history_urls") or {}).get(key) or PORTAL_INFO.get(key, {}).get("history", "")
 
 
 def portal_url(key):
@@ -531,7 +541,8 @@ def api_state():
         "session": {"state": SESSION.state, "message": SESSION.message},
         "default_folder": DEFAULT_FOLDER,
         "version": VERSION,
-        "portal_info": {k: dict(v, url=portal_url(k), default_url=v["url"]) for k, v in PORTAL_INFO.items()},
+        "portal_info": {k: dict(v, url=portal_url(k), default_url=v["url"], history=history_url(k))
+                        for k, v in PORTAL_INFO.items()},
         "forms": [{"code": f["code"], "label": f["label"], "agency": f["agency"]} for f in td.FORMS],
         "kinds": td.KINDS, "agencies": td.AGENCIES,
         "portals": {k: v[0] for k, v in td.PORTALS.items()},
@@ -544,6 +555,15 @@ def api_config():
     for k in ("output_root", "year_format", "confirm_each_file", "browser_channel", "browser_mode", "auto_fill"):
         if k in d:
             CFG[k] = d[k]
+    if "history_urls" in d:
+        hu = {}
+        for k, v in (d["history_urls"] or {}).items():
+            v = str(v or "").strip()
+            if k in PORTAL_INFO and v != PORTAL_INFO[k].get("history", ""):
+                if v and not v.startswith(("http://", "https://")):
+                    return jsonify(error="ลิงก์ต้องขึ้นต้นด้วย https://"), 400
+                hu[k] = v
+        CFG["history_urls"] = hu
     if "portal_urls" in d:
         urls = {}
         for k, v in (d["portal_urls"] or {}).items():
@@ -753,8 +773,24 @@ def api_scan():
     SESSION.scan.update(state="scanning", msg=f"กำลังค้นหาเอกสารปี {year}…", year=year)
     msgs = []
     try:
-        items = SESSION.call(lambda ctx: scanner.scan_pages(ctx, year, bool(d.get("set_year")),
-                                                            SCAN_REFS, msgs.append), timeout=90)
+        def run(ctx):
+            v = SESSION.view
+            pages = None
+            if v and v.active and not v.active.is_closed():
+                page = v.active
+                portal = portal_for_url(page.url)
+                hist = history_url(portal) if portal else ""
+                if hist and not page.url.split("?")[0].rstrip("/").startswith(hist.rstrip("/")):
+                    login_f, _ = v.find_login(page)
+                    if login_f:
+                        raise RuntimeError("ยังไม่ได้เข้าสู่ระบบ — ล็อกอินในส่วนเว็บไซต์ก่อน แล้วกดค้นหาอีกครั้ง")
+                    page.goto(hist, timeout=60000)
+                    msgs.append(f"ไปที่หน้า '{PORTAL_INFO[portal]['history_name']}' ให้แล้ว")
+                if hist:
+                    scanner.wait_records(page)
+                pages = [page]
+            return scanner.scan_pages(ctx, year, bool(d.get("set_year")), SCAN_REFS, msgs.append, pages=pages)
+        items = SESSION.call(run, timeout=120)
     except Exception as e:
         SESSION.scan.update(state="idle", msg=f"ค้นหาไม่สำเร็จ: {e}")
         return jsonify(scan_public())
@@ -838,6 +874,8 @@ def api_view_state():
         out["portal"] = portal
         out["portal_name"] = PORTAL_INFO[portal]["short"] if portal else ""
         out["has_login"] = bool(user or pw_)
+        out["history_url"] = history_url(portal) if portal else ""
+        out["history_name"] = PORTAL_INFO[portal]["history_name"] if portal else ""
     return jsonify(out)
 
 

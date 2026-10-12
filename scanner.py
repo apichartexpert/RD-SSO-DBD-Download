@@ -267,10 +267,28 @@ def describe(item, year_be):
     }
 
 
-def scan_pages(ctx, year_be, set_year, refs, log):
-    """อ่านทุกหน้าในเบราว์เซอร์ คืนรายการเอกสาร; refs[id] = frame สำหรับดาวน์โหลดภายหลัง"""
+def wait_records(page, timeout=15000):
+    """รอให้ตารางรายการแสดง (เว็บแบบ SPA โหลดข้อมูลทีหลัง)"""
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except Exception:
+        pass
+    try:
+        page.wait_for_function(
+            r"""() => /(ภ\.?\s?ง\.?\s?ด|ภ\.?\s?พ\.?\s?\d|P\.?\s?N\.?\s?D|สปส|ส\.?\s?บ\.?\s?ช|บ\.?\s?อ\.?\s?จ|ไม่พบข้อมูล|ไม่มีข้อมูล|no data)/i.test(document.body.innerText)""",
+            timeout=timeout)
+    except Exception:
+        pass
+    try:
+        page.wait_for_timeout(800)
+    except Exception:
+        pass
+
+
+def scan_pages(ctx, year_be, set_year, refs, log, pages=None):
+    """อ่านหน้าในเบราว์เซอร์ (ค่าเริ่มต้น: ทุกแท็บ) คืนรายการเอกสาร; refs[id] = frame สำหรับดาวน์โหลดภายหลัง"""
     results = []
-    pages = [p for p in ctx.pages if not p.is_closed() and p.url.startswith("http")]
+    pages = [p for p in (pages or ctx.pages) if not p.is_closed() and p.url.startswith("http")]
     if set_year:
         for p in pages:
             for f in p.frames:
