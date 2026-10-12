@@ -646,8 +646,19 @@ def api_recent():
     return jsonify(rows=rows[:50], root=str(root))
 
 
+def port_in_use():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sk:
+        sk.settimeout(0.5)
+        return sk.connect_ex((HOST, PORT)) == 0
+
+
 def main():
     url = f"http://{HOST}:{PORT}/"
+    if port_in_use():
+        print(f"TaxDocs เปิดอยู่แล้ว — กำลังเปิด {url}")
+        webbrowser.open(url)
+        return
     print(f"TaxDocs Web กำลังทำงานที่ {url}  (ปิดหน้าต่างนี้เพื่อหยุดโปรแกรม)")
     threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     shutil.rmtree(STAGING, ignore_errors=True)
