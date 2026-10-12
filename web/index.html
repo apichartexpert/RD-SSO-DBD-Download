@@ -268,12 +268,14 @@ td.path2{word-break:break-all;color:var(--muted)}
           <h3>ค้นหาแบบและใบเสร็จอัตโนมัติ</h3>
           <ol class="steps">
             <li>ล็อกอินในส่วนเว็บไซต์ด้านบน (RD: โปรแกรมพาไปหน้า <b>ตรวจสอบผลการยื่นแบบ</b> ให้เอง · SSO/DBD: เข้าหน้าประวัติให้เห็นตารางรายการ)</li>
-            <li>เลือกปี แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมจะอ่านรายการแบบและใบเสร็จในหน้านั้นมาให้เลือก</li>
+            <li>เลือก <b>ช่วงเดือนภาษี</b> แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมอ่านทุกหน้าของตาราง (เปิดเมนู ⋮ และกดหน้าถัดไปให้เอง)</li>
             <li>ติ๊กรายการที่ต้องการ แล้วกด <b>ดาวน์โหลดที่เลือก</b></li>
           </ol>
           <div class="frow">
-            <label>ปีภาษี</label>
-            <select id="fYear"></select>
+            <label>เดือนภาษี ตั้งแต่</label>
+            <select id="fM1"></select><select id="fY1"></select>
+            <label>ถึง</label>
+            <select id="fM2"></select><select id="fY2"></select>
             <label class="switch" style="margin:0"><input type="checkbox" id="fSetYear" checked> ตั้งปีบนเว็บให้ด้วย (ถ้าหน้านั้นมีช่องเลือกปี)</label>
             <button class="primary" id="btnScan" onclick="scan()">ค้นหาในหน้าเว็บ</button>
           </div>
@@ -422,19 +424,25 @@ async function setOutTyped(){
   catch(e){$("outPath").value=S.config.output_root}
 }
 /* ---------- finder ---------- */
-let F={state:"idle",items:[],msg:""}, fShowAll=false, fSel=new Set();
-(function initYears(){const y=new Date().getFullYear()+543;$("fYear").innerHTML=[0,1,2,3,4,5].map(i=>`<option value="${y-i}">${y-i} (${y-i-543})</option>`).join("")})();
+let F={state:"idle",items:[],msg:""}, fShowAll=false, fSel=new Set(), fWasScanning=false;
+const TH_M=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+(function initRange(){const d=new Date(),y=d.getFullYear()+543,m=d.getMonth()+1;
+  const ys=[0,1,2,3,4,5,6].map(i=>`<option value="${y-i}">${y-i}</option>`).join(""), ms=TH_M.map((t,i)=>`<option value="${i+1}">${t}</option>`).join("");
+  $("fY1").innerHTML=ys;$("fY2").innerHTML=ys;$("fM1").innerHTML=ms;$("fM2").innerHTML=ms;
+  $("fY1").value=y;$("fM1").value=1;$("fY2").value=y;$("fM2").value=m;})();
+const pad=n=>String(n).padStart(2,"0");
 async function scan(){
   $("btnScan").disabled=true;$("fMsg").textContent="กำลังค้นหา…";
-  try{F=await api("/api/scan",{year:$("fYear").value,set_year:$("fSetYear").checked});
-      fSel=new Set(F.items.filter(i=>i.match&&i.status!=="done").map(i=>i.id));renderF()}
-  catch(e){$("fMsg").textContent=e.error||"ค้นหาไม่สำเร็จ"}
-  finally{$("btnScan").disabled=false}
+  const from=`${$("fY1").value}-${pad($("fM1").value)}`, to=`${$("fY2").value}-${pad($("fM2").value)}`;
+  if(from>to) return toast("เดือนเริ่มต้นต้องไม่หลังเดือนสิ้นสุด"), $("btnScan").disabled=false;
+  try{F=await api("/api/scan",{from,to,set_year:$("fSetYear").checked});fWasScanning=true;renderF()}
+  catch(e){$("fMsg").textContent=e.error||"ค้นหาไม่สำเร็จ";$("btnScan").disabled=false}
 }
 const FST={new:"",waiting:"รอ",downloading:"กำลังดาวน์โหลด…",done:"✓ ได้แล้ว",failed:"✗ ไม่สำเร็จ"};
 function renderF(){
   $("fMsg").textContent=F.msg||"";
   const list=F.items.filter(i=>fShowAll||i.match);
+  if(F.state==="scanning"){$("fResult").innerHTML=`<div class="hint" style="margin-top:8px">⏳ กำลังอ่านหน้าเว็บ — กำลังเปิดเมนูของแต่ละแถวและเปลี่ยนหน้าให้อัตโนมัติ ภาพในส่วนเว็บไซต์จะขยับเอง (อย่าคลิกในหน้าเว็บระหว่างนี้)</div>`;return}
   if(!F.items.length){$("fResult").innerHTML="";return}
   const busy=F.state==="downloading";
   $("fResult").innerHTML=`
@@ -443,17 +451,17 @@ function renderF(){
      <button class="sm" onclick="fPick('form')">เฉพาะแบบ</button>
      <button class="sm" onclick="fPick('receipt')">เฉพาะใบเสร็จ</button>
      <button class="sm" onclick="fPick('none')">ไม่เลือก</button>
-     <label class="switch" style="margin:0 0 0 6px"><input type="checkbox" ${fShowAll?"checked":""} onchange="fShowAll=this.checked;renderF()"> แสดงปีอื่นด้วย (${F.items.length-F.items.filter(i=>i.match).length})</label>
+     <label class="switch" style="margin:0 0 0 6px"><input type="checkbox" ${fShowAll?"checked":""} onchange="fShowAll=this.checked;renderF()"> แสดงรายการนอกช่วงด้วย (${F.items.length-F.items.filter(i=>i.match).length})</label>
      <span style="flex:1"></span>
      <button class="primary" ${busy?"disabled":""} onclick="fDownload()">ดาวน์โหลดที่เลือก (${[...fSel].filter(id=>list.some(i=>i.id===id)).length})</button>
    </div>
-   <div style="overflow:auto"><table class="ftable"><thead><tr><th></th><th>แบบ</th><th>ประเภท</th><th>งวด</th><th>ปุ่มบนเว็บ / ข้อความในแถว</th><th>สถานะ</th></tr></thead><tbody>
+   <div style="overflow:auto"><table class="ftable"><thead><tr><th></th><th>แบบ</th><th>ประเภท</th><th>งวด</th><th>หน้า</th><th>ปุ่มบนเว็บ / ข้อความในแถว</th><th>สถานะ</th></tr></thead><tbody>
    ${list.length?list.map(i=>`<tr class="${i.match?"":"dim"}">
       <td><input type="checkbox" ${fSel.has(i.id)?"checked":""} ${busy?"disabled":""} onchange="this.checked?fSel.add('${i.id}'):fSel.delete('${i.id}');renderF()"></td>
-      <td>${esc(i.form)}</td><td>${esc(i.kind)}</td><td>${esc(i.period||"-")}</td>
+      <td>${esc(i.form)}</td><td>${esc(i.kind)}</td><td title="${(i.period||"").startsWith("~")?"ประมาณจากวันที่ยื่น — ระบบอ่านเดือนภาษีจริงจากเอกสารตอนบันทึก":""}">${esc(i.period||"-")}</td><td>${i.pg||1}</td>
       <td class="rowtxt"><b style="color:var(--ink)">${esc(i.label||"(ปุ่ม)")}</b><br>${esc(i.row)}</td>
       <td class="st-${i.status}">${FST[i.status]||""}${i.note&&i.status==="failed"?`<br><small>${esc(i.note)}</small>`:""}</td></tr>`).join("")
-     :`<tr><td colspan="6" class="empty">ไม่มีรายการของปี ${F.year} — ติ๊ก "แสดงปีอื่นด้วย" หรือเลือกปีบนเว็บแล้วค้นหาใหม่</td></tr>`}
+     :`<tr><td colspan="7" class="empty">ไม่มีรายการในช่วงที่เลือก — ติ๊ก "แสดงรายการนอกช่วงด้วย" หรือเปลี่ยนช่วงเดือนแล้วค้นหาใหม่</td></tr>`}
    </tbody></table></div>`;
 }
 function fPick(m){
@@ -468,9 +476,10 @@ async function fDownload(){
   F=await api("/api/scan/download",{ids});renderF();
 }
 async function pollF(){
-  if(F.state!=="downloading")return;
+  if(F.state!=="downloading"&&F.state!=="scanning")return;
   const was=F.state; F=await api("/api/scan");
   if(was==="downloading"&&F.state==="idle"){fSel.clear();toast("ดาวน์โหลดเสร็จ — ตรวจในคิวเอกสาร")}
+  if(was==="scanning"&&F.state==="idle"){fSel=new Set(F.items.filter(i=>i.match&&i.status!=="done").map(i=>i.id));$("btnScan").disabled=false}
   renderF();
 }
 async function startDl(){
@@ -539,7 +548,8 @@ async function refresh(){if(editing)return;const r=await api("/api/queue");const
 async function upd(id,patch){editing=false;await api("/api/item/"+id,patch);refresh._s=null;await refresh();if(patch.action==="save")toast("บันทึกแล้ว")}
 function select(id){
   sel=id;render();const it=items.find(i=>i.id===id);
-  $("preview").innerHTML=it&&it.is_pdf?`<iframe src="/api/item/${id}/file?t=${TOKEN}"></iframe>`:"ไฟล์นี้ไม่ใช่ PDF — ไม่มีตัวอย่าง";
+  $("preview").innerHTML=it&&it.is_pdf?`<iframe src="/api/item/${id}/file?t=${TOKEN}"></iframe>`:
+    (it&&/\.(png|jpe?g)$/i.test(it.orig)?`<img src="/api/item/${id}/file?t=${TOKEN}" style="max-width:100%;max-height:70vh">`:"ไฟล์นี้ไม่ใช่ PDF — ไม่มีตัวอย่าง");
 }
 async function saveAll(){const r=await api("/api/save-all",{});toast(`บันทึก ${r.saved} ไฟล์ (รายการที่ระบบเดาหรือไม่ทราบแบบ ยังรอให้ตรวจ)`);refresh._s=null;refresh()}
 

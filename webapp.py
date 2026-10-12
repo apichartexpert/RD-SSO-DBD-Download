@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import queue
+from datetime import datetime
 import uuid
 import webbrowser
 from pathlib import Path
@@ -354,6 +355,19 @@ class Session:
         def on_response(r):
             try:
                 ct = (r.headers.get("content-type") or "").lower()
+                if ("json" in ct or "text/plain" in ct) and counter.get("meta") is not None:
+                    # เว็บบางแห่งส่ง PDF มาเป็นข้อความ base64 ใน JSON (เช่น {"data":"JVBERi0..."})
+                    try:
+                        body = r.body()
+                    except Exception:
+                        return
+                    if len(body) < 40_000_000 and b"JVBERi0" in body:
+                        txt = body.decode("utf-8", "ignore")
+                        for m in td.re.finditer(r"JVBERi0[A-Za-z0-9+/=\\]{200,}", txt):
+                            data = scanner._decode(m.group(0).replace("\\/", "/").replace("\\", ""))
+                            if data[:5] == b"%PDF-":
+                                keep(data, "document.pdf", r.url)
+                    return
                 if "pdf" not in ct and "octet-stream" not in ct:
                     return
                 data = r.body()
@@ -394,6 +408,10 @@ class Session:
                         ctx.close()
                         kw["user_agent"] = UA_CACHE[ua_key]
                         ctx = pw.chromium.launch_persistent_context(str(prof), **kw)
+                try:
+                    ctx.add_init_script(scanner.INIT_JS)     # จำไฟล์ที่เว็บสร้างในหน้า (blob) และการสั่งพิมพ์
+                except Exception:
+                    pass
                 closed = {"v": False}
                 ctx.on("close", lambda *_: closed.update(v=True))
                 view = viewer.View(ctx, lambda m: setattr(self, "message", m)) if embedded else None
@@ -748,8 +766,10 @@ SCAN_REFS = {}
 
 def scan_public():
     sc = SESSION.scan
-    keep_keys = ("id", "label", "row", "form", "agency", "kind", "period", "match", "status", "note", "page_title")
+    keep_keys = ("id", "label", "row", "form", "agency", "kind", "period", "match", "status", "note", "page_title", "pg")
+    rng = sc.get("range")
     return {"state": sc["state"], "msg": sc["msg"], "year": sc["year"],
+            "range": [f"{rng[0][0]}-{rng[0][1]:02d}", f"{rng[1][0]}-{rng[1][1]:02d}"] if rng else None,
             "items": [{k: it.get(k) for k in keep_keys} for it in sc["items"]]}
 
 
@@ -758,24 +778,63 @@ def api_scan_get():
     return jsonify(scan_public())
 
 
+DEBUG_LOG = HERE / "_debug" / "fetch_log.txt"
+
+
+def debug_write(lines):
+    """บันทึกสิ่งที่เว็บทำเมื่อดาวน์โหลดไม่สำเร็จ (ไม่มีรหัสผ่าน/เนื้อหาเอกสาร) — ใช้ส่งให้ช่วยวิเคราะห์"""
+    try:
+        DEBUG_LOG.parent.mkdir(exist_ok=True)
+        old = DEBUG_LOG.read_text(encoding="utf-8").splitlines()[-400:] if DEBUG_LOG.exists() else []
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        DEBUG_LOG.write_text("\n".join(old + [f"=== {stamp}"] + lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def parse_ym(v):
+    """'2569-09' หรือ {"y":2569,"m":9} → (2569, 9) เป็น พ.ศ."""
+    if isinstance(v, dict):
+        return td.be(int(v["y"])), int(v.get("m") or 1)
+    m = td.re.match(r"(\d{4})-(\d{1,2})$", str(v or "").strip())
+    if not m:
+        raise ValueError
+    return td.be(int(m.group(1))), int(m.group(2))
+
+
+def fmt_rng(rng):
+    th = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+    (y1, m1), (y2, m2) = rng
+    return f"{th[m1]} {y1} – {th[m2]} {y2}"
+
+
 @app.post("/api/scan")
 def api_scan():
     if SESSION.state != "running":
         return jsonify(error="เปิดเว็บและล็อกอินก่อน แล้วไปที่หน้าประวัติการยื่นแบบ"), 400
-    if SESSION.scan["state"] == "downloading":
-        return jsonify(error="กำลังดาวน์โหลดอยู่ รอสักครู่"), 409
+    if SESSION.scan["state"] != "idle":
+        return jsonify(error="กำลังทำงานอยู่ รอสักครู่"), 409
     d = request.get_json(force=True) or {}
     try:
-        year = int(d.get("year"))
+        if d.get("from"):
+            rng = (parse_ym(d["from"]), parse_ym(d.get("to") or d["from"]))
+        else:
+            y = td.be(int(d.get("year")))
+            rng = ((y, 1), (y, 12))
     except Exception:
-        return jsonify(error="กรุณาเลือกปี"), 400
-    year = td.be(year)
-    SESSION.scan.update(state="scanning", msg=f"กำลังค้นหาเอกสารปี {year}…", year=year)
+        return jsonify(error="กรุณาเลือกช่วงเดือนภาษี"), 400
+    if rng[0] > rng[1]:
+        rng = (rng[1], rng[0])
+    SESSION.scan.update(state="scanning", msg=f"กำลังค้นหาเอกสาร {fmt_rng(rng)}…", year=rng[1][0],
+                        range=rng, items=[] if not d.get("keep") else SESSION.scan["items"])
     msgs = []
-    try:
-        def run(ctx):
+    prev_done = {(i.get("row"), i.get("label")): i for i in SESSION.scan["items"] if i.get("status") == "done"}
+
+    def job(ctx):
+        try:
             v = SESSION.view
             pages = None
+            hist = ""
             if v and v.active and not v.active.is_closed():
                 page = v.active
                 portal = portal_for_url(page.url)
@@ -789,32 +848,37 @@ def api_scan():
                 if hist:
                     scanner.wait_records(page)
                 pages = [page]
-            return scanner.scan_pages(ctx, year, bool(d.get("set_year")), SCAN_REFS, msgs.append, pages=pages)
-        items = SESSION.call(run, timeout=120)
-    except Exception as e:
-        SESSION.scan.update(state="idle", msg=f"ค้นหาไม่สำเร็จ: {e}")
-        return jsonify(scan_public())
-    old = {(i.get("row"), i.get("label")): i for i in SESSION.scan["items"] if i.get("status") == "done"}
-    for it in items:
-        prev = old.get((it.get("row"), it.get("label")))
-        it["status"] = "done" if prev else "new"
-        it["note"] = prev.get("note", "") if prev else ""
-    n_match = sum(1 for i in items if i["match"])
-    msg = f"พบ {len(items)} รายการในหน้าเว็บ · ตรงกับปี {year}: {n_match} รายการ"
-    info = getattr(scanner.scan_pages, "last_info", {}) or {}
-    where = " / ".join(x for x in info.get("pages", []) if x)[:120]
-    if where:
-        msg += f" (อ่านจากหน้า: {where})"
-    if not items:
-        if info.get("login"):
-            msg = "ยังไม่ได้เข้าสู่ระบบ — ใส่ชื่อผู้ใช้/รหัสผ่านในหน้าต่าง Edge ก่อน แล้วไปที่หน้าประวัติการยื่นแบบ"
-        else:
-            msg = (f"ไม่พบรายการแบบ/ใบเสร็จในหน้าที่เปิดอยู่ ({where or 'ไม่มีหน้าเว็บ'}) — "
-                   "หน้านี้น่าจะยังไม่ใช่หน้าประวัติ: หลังล็อกอิน ให้เข้าเมนู 'ประวัติการยื่นแบบ' / "
-                   "'ตรวจสอบสถานะการยื่นแบบ' / 'พิมพ์ใบเสร็จ' ให้เห็นตารางรายการก่อน แล้วกดค้นหาอีกครั้ง")
-        if info.get("junk"):
-            msg += f" · ข้ามลิงก์ที่ไม่ใช่เอกสารภาษี (เช่น โปรแกรม/คู่มือ) {info['junk']} รายการ"
-    SESSION.scan.update(state="idle", items=items, msg=" · ".join(msgs + [msg]))
+                SESSION.scan["hist"] = hist or page.url
+            items = scanner.scan_pages(ctx, rng, bool(d.get("set_year")), SCAN_REFS, msgs.append, pages=pages,
+                                       progress=lambda m: SESSION.scan.update(msg=m))
+        except Exception as e:
+            SESSION.scan.update(state="idle", msg=f"ค้นหาไม่สำเร็จ: {str(e).splitlines()[0]}")
+            return
+        for it in items:
+            prev = prev_done.get((it.get("row"), it.get("label")))
+            it["status"] = "done" if prev else "new"
+            it["note"] = prev.get("note", "") if prev else ""
+        info = getattr(scanner.scan_pages, "last_info", {}) or {}
+        n_match = sum(1 for i in items if i["match"])
+        msg = f"พบ {n_match} รายการในช่วง {fmt_rng(rng)}"
+        if info.get("table_pages", 1) > 1:
+            msg += f" (อ่านครบ {info['table_pages']} หน้า)"
+        if info.get("out_of_range"):
+            msg += f" · ข้าม {info['out_of_range']} แถวที่อยู่นอกช่วง"
+        where = " / ".join(x for x in info.get("pages", []) if x)[:80]
+        if where:
+            msg += f" · หน้า: {where}"
+        if not items and not info.get("out_of_range"):
+            if info.get("login"):
+                msg = "ยังไม่ได้เข้าสู่ระบบ — ล็อกอินในส่วนเว็บไซต์ก่อน แล้วกดค้นหาอีกครั้ง"
+            else:
+                msg = (f"ไม่พบรายการแบบ/ใบเสร็จในหน้าที่เปิดอยู่ ({where or 'ไม่มีหน้าเว็บ'}) — "
+                       "หน้านี้น่าจะยังไม่ใช่หน้าประวัติ ให้เข้าหน้าที่มีตารางรายการก่อน แล้วกดค้นหาอีกครั้ง")
+            if info.get("junk"):
+                msg += f" · ข้ามลิงก์ที่ไม่ใช่เอกสารภาษี {info['junk']} รายการ"
+        SESSION.scan.update(state="idle", items=items, msg=" · ".join(msgs + [msg]))
+
+    SESSION.call(job, wait=False)
     return jsonify(scan_public())
 
 
@@ -825,7 +889,7 @@ def api_scan_download():
     if SESSION.scan["state"] != "idle":
         return jsonify(error="กำลังทำงานอยู่"), 409
     ids = set((request.get_json(force=True) or {}).get("ids") or [])
-    todo = [it for it in SESSION.scan["items"] if it["id"] in ids]
+    todo = sorted([it for it in SESSION.scan["items"] if it["id"] in ids], key=lambda it: it.get("pg") or 1)
     if not todo:
         return jsonify(error="ยังไม่ได้เลือกรายการ"), 400
     for it in todo:
@@ -844,142 +908,28 @@ def api_scan_download():
                 it["status"], it["note"] = "failed", "กดค้นหาใหม่"
                 continue
             try:
+                page = frame.page
+                hist = SESSION.scan.get("hist") or page.url
+
+                def reset():
+                    page.goto(hist, timeout=60000)
+                    scanner.wait_records(page)
+                if (it.get("pg") or 1) != getattr(page, "_taxdocs_pg", 1) or it.get("menu"):
+                    if not scanner.ensure_page(page, frame, it, reset):
+                        it["status"], it["note"] = "failed", "ไปหน้าที่มีรายการนี้ไม่ได้ — กดค้นหาใหม่"
+                        continue
                 good, note = scanner.fetch(ctx, frame, it, SESSION._keep, SESSION._counter,
-                                           lambda m: SESSION.scan.update(msg=m))
+                                           lambda m: SESSION.scan.update(msg=m), debug=debug_write)
             except Exception as e:
                 good, note = False, str(e).splitlines()[0][:100]
             it["status"], it["note"] = ("done" if good else "failed"), note
             ok += good
-        SESSION.scan.update(state="idle",
-                            msg=f"ดาวน์โหลดเสร็จ {ok}/{len(todo)} รายการ — ตรวจและบันทึกในคิวเอกสารด้านล่าง")
+        msg = f"ดาวน์โหลดเสร็จ {ok}/{len(todo)} รายการ — ตรวจและบันทึกในคิวเอกสารด้านล่าง"
+        if ok < len(todo):
+            msg += " · รายการที่ไม่สำเร็จถูกบันทึกรายละเอียดไว้ใน _debug\\fetch_log.txt"
+        SESSION.scan.update(state="idle", msg=msg)
     SESSION.call(job, wait=False)
     return jsonify(scan_public())
-
-
-# ---------------------------------------------------------------- เว็บไซต์ในหน้าโปรแกรม
-def active_view():
-    v = SESSION.view
-    return v if (v and SESSION.state == "running") else None
-
-
-@app.get("/api/view/state")
-def api_view_state():
-    v = active_view()
-    out = {"mode": SESSION.mode if SESSION.state != "idle" else CFG.get("browser_mode", "embedded"),
-           "running": SESSION.state == "running", "state": SESSION.state, "company": SESSION.company}
-    if v:
-        out.update(v.snapshot())
-        portal = portal_for_url(v.url)
-        user, pw_ = login_for(SESSION.company, portal)
-        out["portal"] = portal
-        out["portal_name"] = PORTAL_INFO[portal]["short"] if portal else ""
-        out["has_login"] = bool(user or pw_)
-        out["history_url"] = history_url(portal) if portal else ""
-        out["history_name"] = PORTAL_INFO[portal]["history_name"] if portal else ""
-    return jsonify(out)
-
-
-@app.get("/api/view/frame")
-def api_view_frame():
-    v = active_view()
-    if not v:
-        return ("", 204)
-    try:
-        after = int(request.args.get("after", 0))
-    except ValueError:
-        after = 0
-    fr = v.latest_frame(after, timeout=8.0)
-    if not fr or fr[0] <= after:
-        return ("", 204, {"X-Seq": str(after)})
-    seq, data, w, h = fr
-    return (data, 200, {"Content-Type": "image/jpeg", "Cache-Control": "no-store", "X-Seq": str(seq),
-                        "X-W": str(w or v.size["width"]), "X-H": str(h or v.size["height"])})
-
-
-@app.post("/api/view/input")
-def api_view_input():
-    v = active_view()
-    if not v:
-        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
-    for ev in (request.get_json(force=True) or {}).get("events", [])[:300]:
-        if isinstance(ev, dict):
-            v.queue_input(ev)
-    return jsonify(ok=True)
-
-
-@app.post("/api/view/dialog")
-def api_view_dialog():
-    v = active_view()
-    d = request.get_json(force=True) or {}
-    ok = v.answer_dialog(d.get("accept"), d.get("text")) if v else False
-    return jsonify(ok=ok)
-
-
-@app.post("/api/view/autofill")
-def api_view_autofill():
-    v = active_view()
-    if not v:
-        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
-    portal = portal_for_url(v.url)
-    if not portal:
-        return jsonify(error="หน้านี้ไม่ใช่เว็บ RD / SSO / DBD"), 400
-    user, pw_ = login_for(SESSION.company, portal)
-    if not (user or pw_):
-        return jsonify(error=f"ยังไม่ได้บันทึกชื่อผู้ใช้/รหัสผ่าน {PORTAL_INFO[portal]['short']} ของบริษัทนี้ — "
-                             "พิมพ์ในหน้าเว็บแล้วกด 'จำชื่อผู้ใช้/รหัสผ่าน' หรือตั้งค่าที่ส่วนบริษัท"), 400
-    ok, msg = SESSION.call(lambda ctx: v.fill_login(user, pw_), timeout=30)
-    return (jsonify(ok=True, msg=msg) if ok else (jsonify(error=msg), 400))
-
-
-@app.post("/api/view/remember")
-def api_view_remember():
-    """จำชื่อผู้ใช้/รหัสผ่านที่ผู้ใช้พิมพ์ไว้ในหน้าล็อกอินที่แสดงอยู่"""
-    v = active_view()
-    if not v:
-        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
-    portal = portal_for_url(v.url)
-    c = company_by_id(SESSION.company)
-    if not portal or not c:
-        return jsonify(error="หน้านี้ไม่ใช่เว็บ RD / SSO / DBD"), 400
-    user, pw_ = SESSION.call(lambda ctx: v.read_login(), timeout=30)
-    if user is None:
-        return jsonify(error="ไม่พบช่องชื่อผู้ใช้/รหัสผ่านในหน้านี้"), 400
-    if not user and not pw_:
-        return jsonify(error="ยังไม่ได้พิมพ์ชื่อผู้ใช้/รหัสผ่านในหน้าเว็บ"), 400
-    return save_login(c, portal, user, pw_)
-
-
-def save_login(c, portal, username, password=None, clear=False):
-    logins = c.setdefault("logins", {})
-    if username is not None:
-        if username:
-            logins[portal] = {"username": username}
-        else:
-            logins.pop(portal, None)
-    msg = "บันทึกชื่อผู้ใช้แล้ว"
-    if clear:
-        creds.delete_password(c["tax_id"], portal)
-        msg = "ลบรหัสผ่านที่จำไว้แล้ว"
-    elif password:
-        try:
-            creds.set_password(c["tax_id"], portal, password)
-            msg = "บันทึกชื่อผู้ใช้และรหัสผ่านแล้ว (รหัสผ่านเก็บใน Windows Credential Manager)"
-        except Exception as e:
-            save_cfg(CFG)
-            return jsonify(error=f"บันทึกชื่อผู้ใช้แล้ว แต่เก็บรหัสผ่านไม่ได้: {e}"), 400
-    save_cfg(CFG)
-    return jsonify(ok=True, msg=msg, company=public_company(c))
-
-
-@app.post("/api/company/login")
-def api_company_login():
-    d = request.get_json(force=True) or {}
-    c = company_by_id(d.get("tax_id"))
-    portal = d.get("portal")
-    if not c or c["tax_id"] != d.get("tax_id") or portal not in PORTAL_INFO:
-        return jsonify(error="ไม่พบบริษัทหรือเว็บ"), 400
-    return save_login(c, portal, (d.get("username") or "").strip(), d.get("password") or None,
-                      bool(d.get("clear_password")))
 
 
 @app.post("/api/session/stop")
