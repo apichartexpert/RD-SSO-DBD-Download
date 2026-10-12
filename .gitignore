@@ -1,0 +1,8 @@
+# ค่าตั้งส่วนตัว (ชื่อบริษัท / เลขผู้เสียภาษี / โฟลเดอร์)
+config.yaml
+# session การล็อกอินเว็บราชการ — ห้ามอัปโหลด
+browser_profile/
+_staging/
+__pycache__/
+*.pyc
+.venv/

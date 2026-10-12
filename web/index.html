@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaxDocs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f4f0; --panel:#fff; --ink:#1d2421; --muted:#68716c; --line:#e3e1da;
+  --accent:#1f6f54; --accent-ink:#fff; --accent-soft:#e3f0ea;
+  --warn:#9a6200; --warn-soft:#fbf0d9; --bad:#b3261e; --bad-soft:#fbe5e3; --info-soft:#e8eef8;
+  --radius:10px; --shadow:0 1px 2px rgba(0,0,0,.05),0 4px 14px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#141816; --panel:#1c211f; --ink:#e7ebe8; --muted:#97a19b; --line:#2c3330;
+  --accent:#4fb38a; --accent-ink:#0c1410; --accent-soft:#1d3329;
+  --warn:#e3b04f; --warn-soft:#3a2f17; --bad:#ef8a80; --bad-soft:#3d1f1c; --info-soft:#1d2635;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 "IBM Plex Sans Thai",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.2px}
+header .sub{color:var(--muted);font-size:13px}
+.status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.dot.on{background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+main{display:grid;grid-template-columns:340px 1fr;gap:18px;padding:18px 24px;max-width:1500px;margin:0 auto}
+main>*{min-width:0}
+@media (max-width:900px){main{grid-template-columns:minmax(0,1fr);padding:16px}.grid4{grid-template-columns:1fr 1fr!important}header{padding:12px 16px}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+.card+.card{margin-top:14px}
+.card h2{font-size:14px;margin:0 0 12px;font-weight:600;color:var(--muted);text-transform:none}
+label.f{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input[type=text],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.row{display:flex;gap:8px;align-items:center}
+.path{flex:1;min-width:0;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;font-size:13px;word-break:break-all;background:var(--bg)}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+button.danger{color:var(--bad)}
+button.sm{padding:4px 9px;font-size:13px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.comp{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.comp small{color:var(--muted);display:block}
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.tab{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 12px;color:var(--muted)}
+.tab.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500}
+.portals{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 12px}
+.chip{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:14px;cursor:pointer}
+.chip input{accent-color:var(--accent)}
+.msg{font-size:13px;color:var(--muted);margin-top:10px;min-height:20px}
+.qhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.qhead h2{margin:0}
+.counts{font-size:13px;color:var(--muted)}
+.queue{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+@media (max-width:1200px){.queue{grid-template-columns:1fr}}
+.list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto;padding-right:2px}
+.item{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--panel);cursor:pointer}
+.item.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.item .top{display:flex;gap:8px;align-items:center;font-size:13px}
+.item .name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.badge{font-size:12px;padding:1px 8px;border-radius:999px;background:var(--info-soft)}
+.b-saved{background:var(--accent-soft);color:var(--accent)}
+.b-dup,.b-skip{background:var(--bg);color:var(--muted)}
+.b-err{background:var(--bad-soft);color:var(--bad)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.grid4{display:grid;grid-template-columns:1.4fr 1fr 1fr 1.2fr;gap:6px;margin-top:8px}
+.grid4 select,.grid4 input{padding:5px 7px;font-size:13px}
+.dest{font-size:12px;color:var(--muted);margin-top:6px;word-break:break-all}
+.acts{display:flex;gap:6px;margin-top:8px}
+.preview{border:1px solid var(--line);border-radius:9px;min-height:60vh;background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--muted);overflow:hidden}
+.preview iframe{width:100%;height:70vh;border:0}
+.empty{color:var(--muted);text-align:center;padding:40px 10px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+td.path2{word-break:break-all;color:var(--muted)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+.modal.on{display:flex}
+.box{background:var(--panel);border-radius:12px;width:min(640px,100%);max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.box .bh{padding:14px 16px;border-bottom:1px solid var(--line);font-weight:600}
+.box .bb{padding:12px 16px;overflow:auto;flex:1}
+.box .bf{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.roots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.dirs{border:1px solid var(--line);border-radius:8px;max-height:44vh;overflow:auto}
+.dir{padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:8px}
+.dir:hover{background:var(--accent-soft)}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;opacity:0;transition:.2s;pointer-events:none;z-index:20}
+.toast.on{opacity:1}
+.switch{display:flex;gap:8px;align-items:center;font-size:14px;margin-top:10px}
+.switch input{accent-color:var(--accent);width:16px;height:16px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>TaxDocs</h1>
+    <div class="sub">ดาวน์โหลดและจัดเก็บแบบภาษี · ใบเสร็จ · งบการเงิน</div>
+  </div>
+  <div class="status"><span class="dot" id="dot"></span><span id="stateText">พร้อม</span></div>
+</header>
+
+<main>
+  <aside>
+    <div class="card">
+      <h2>โฟลเดอร์ปลายทาง</h2>
+      <div class="row"><div class="path" id="outPath">—</div></div>
+      <div class="row" style="margin-top:8px">
+        <button class="pickBtn" onclick="pickFolder('out')">เลือกโฟลเดอร์…</button>
+        <button onclick="api('/api/open-output',{})">เปิดโฟลเดอร์</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>บริษัท</h2>
+      <div id="compList"></div>
+      <label class="f">ชื่อบริษัท</label>
+      <input type="text" id="cName" placeholder="บริษัท ตัวอย่าง จำกัด">
+      <label class="f">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+      <input type="text" id="cTax" inputmode="numeric" maxlength="17" placeholder="0105500000000">
+      <div style="margin-top:10px"><button onclick="addCompany()">+ เพิ่มบริษัท</button></div>
+    </div>
+
+    <div class="card">
+      <h2>ตัวเลือก</h2>
+      <label class="f">ปีในชื่อโฟลเดอร์/ไฟล์</label>
+      <select id="yearFmt" onchange="saveOpt()">
+        <option value="BE">พ.ศ. (2569)</option><option value="CE">ค.ศ. (2026)</option>
+      </select>
+      <label class="f">เบราว์เซอร์</label>
+      <select id="channel" onchange="saveOpt()">
+        <option value="chrome">Google Chrome</option><option value="msedge">Microsoft Edge</option><option value="">Chromium (ติดมากับโปรแกรม)</option>
+      </select>
+      <label class="switch"><input type="checkbox" id="confirm" onchange="saveOpt()"> ตรวจทีละไฟล์ก่อนบันทึก</label>
+      <div class="hint">ปิดตัวเลือกนี้เพื่อบันทึกอัตโนมัติทันทีที่ได้รับไฟล์</div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="card">
+      <div class="tabs">
+        <button class="tab on" data-t="dl" onclick="tab('dl')">ดาวน์โหลดจากเว็บ</button>
+        <button class="tab" data-t="sort" onclick="tab('sort')">จัดไฟล์ที่มีอยู่</button>
+        <button class="tab" data-t="hist" onclick="tab('hist')">ประวัติการบันทึก</button>
+      </div>
+
+      <div id="t-dl">
+        <label class="f">บริษัทที่จะดาวน์โหลด</label>
+        <select class="compSel" id="dlComp"></select>
+        <label class="f">เว็บที่ต้องการเปิด</label>
+        <div class="portals" id="portals"></div>
+        <div class="row">
+          <button class="primary" id="btnStart" onclick="startDl()">เปิดเบราว์เซอร์และเริ่ม</button>
+          <button class="danger" id="btnStop" onclick="api('/api/session/stop',{})">หยุด</button>
+        </div>
+        <div class="hint" style="margin-top:8px">ล็อกอินในหน้าต่างที่เปิดขึ้นด้วยตัวเอง แล้วกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวด้านล่างทันที</div>
+      </div>
+
+      <div id="t-sort" hidden>
+        <label class="f">โฟลเดอร์ต้นทาง (เช่น Downloads)</label>
+        <div class="row"><div class="path" id="srcPath">ยังไม่ได้เลือก</div><button class="pickBtn" onclick="pickFolder('src')">เลือก…</button></div>
+        <label class="f">บริษัทเริ่มต้น (ถ้าในเอกสารไม่พบเลขผู้เสียภาษี)</label>
+        <select class="compSel" id="sortComp"></select>
+        <label class="switch"><input type="checkbox" id="move"> ย้ายไฟล์ (ไม่เลือก = คัดลอก เก็บต้นฉบับไว้)</label>
+        <div style="margin-top:12px"><button class="primary" onclick="startSort()">อ่านและจัดหมวด</button></div>
+      </div>
+
+      <div id="t-hist" hidden>
+        <div class="row" style="justify-content:space-between;margin-bottom:8px">
+          <span class="counts">50 รายการล่าสุด</span><button class="sm" onclick="loadHist()">รีเฟรช</button>
+        </div>
+        <div style="overflow:auto"><table><thead><tr><th>บันทึกเมื่อ</th><th>บริษัท</th><th>แบบ</th><th>ประเภท</th><th>งวด</th><th>ไฟล์</th></tr></thead><tbody id="hist"></tbody></table></div>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="qhead">
+        <h2>คิวเอกสาร</h2><span class="counts" id="counts"></span>
+        <span style="flex:1"></span>
+        <button class="sm" onclick="saveAll()">บันทึกทั้งหมดที่มั่นใจ</button>
+        <button class="sm" onclick="api('/api/queue/clear',{}).then(refresh)">ล้างรายการที่เสร็จ</button>
+      </div>
+      <div class="queue">
+        <div class="list" id="list"><div class="empty">ยังไม่มีไฟล์ — เริ่มดาวน์โหลดหรือจัดไฟล์จากโฟลเดอร์</div></div>
+        <div class="preview" id="preview">เลือกรายการเพื่อดูตัวอย่างเอกสาร</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="bh">เลือกโฟลเดอร์</div>
+    <div class="bb">
+      <div class="roots" id="roots"></div>
+      <div class="row" style="margin-bottom:8px"><button class="sm" onclick="fsUp()">↑ ขึ้นไป</button><div class="path" id="fsPath"></div></div>
+      <div class="dirs" id="dirs"></div>
+      <div class="row" style="margin-top:10px"><input type="text" id="newDir" placeholder="ชื่อโฟลเดอร์ใหม่"><button onclick="mkdir()">สร้าง</button></div>
+    </div>
+    <div class="bf">
+      <button onclick="nativePick()" style="margin-right:auto">ใช้หน้าต่างเลือกโฟลเดอร์ของ Windows</button>
+      <button onclick="closeModal()">ยกเลิก</button>
+      <button class="primary" onclick="choose()">เลือกโฟลเดอร์นี้</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN="__TOKEN__";
+let S=null, items=[], sel=null, pickFor=null, fs={path:"",parent:""}, srcFolder="", editing=false;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function api(url,body){
+  const r=await fetch(url,{method:body?"POST":"GET",headers:{"X-Token":TOKEN,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){toast(j.error||"เกิดข้อผิดพลาด");throw j}
+  return j;
+}
+function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),2600)}
+
+async function loadState(first){
+  S=await api("/api/state");
+  const c=S.config;
+  $("outPath").textContent=c.output_root;
+  $("yearFmt").value=c.year_format||"BE";
+  $("channel").value=c.browser_channel||"";
+  $("confirm").checked=!!c.confirm_each_file;
+  $("compList").innerHTML=c.companies.length?c.companies.map((x,i)=>`<div class="comp"><div>${esc(x.name)}<small>${x.tax_id}</small></div><button class="sm danger" onclick="delCompany(${i})">ลบ</button></div>`).join(""):`<div class="hint">ยังไม่มีบริษัท — เพิ่มอย่างน้อย 1 บริษัท</div>`;
+  document.querySelectorAll(".compSel").forEach(s=>{const v=s.value;s.innerHTML=c.companies.map(x=>`<option value="${x.tax_id}">${esc(x.name)}</option>`).join("");if(v)s.value=v});
+  if(first){$("portals").innerHTML=Object.entries(S.portals).map(([k,v])=>`<label class="chip"><input type="checkbox" value="${k}" checked> ${esc(v)}</label>`).join("")}
+  const st=S.session.state, on=st!=="idle";
+  $("dot").classList.toggle("on",on);
+  $("stateText").textContent={idle:"พร้อม",starting:"กำลังเปิดเบราว์เซอร์",running:"เบราว์เซอร์เปิดอยู่",sorting:"กำลังอ่านไฟล์"}[st]||st;
+  $("btnStart").disabled=on; $("btnStop").disabled=st!=="running";
+  $("msg").textContent=S.session.message||"";
+}
+
+async function saveCfg(patch){await api("/api/config",patch);await loadState()}
+function saveOpt(){saveCfg({year_format:$("yearFmt").value,browser_channel:$("channel").value,confirm_each_file:$("confirm").checked})}
+async function addCompany(){
+  const name=$("cName").value.trim(), tax=$("cTax").value.replace(/\D/g,"");
+  if(tax.length!==13) return toast("เลขผู้เสียภาษีต้องมี 13 หลัก");
+  if(S.config.companies.some(c=>c.tax_id===tax)) return toast("มีบริษัทนี้แล้ว");
+  await saveCfg({companies:[...S.config.companies,{name:name||tax,tax_id:tax}]});
+  $("cName").value="";$("cTax").value="";toast("เพิ่มบริษัทแล้ว");
+}
+async function delCompany(i){
+  const c=S.config.companies[i]; if(!confirm(`ลบ ${c.name} ออกจากรายการ? (ไฟล์ที่บันทึกแล้วไม่ถูกลบ)`))return;
+  await saveCfg({companies:S.config.companies.filter((_,j)=>j!==i)});
+}
+
+function tab(t){document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on",b.dataset.t===t));["dl","sort","hist"].forEach(x=>$("t-"+x).hidden=x!==t);if(t==="hist")loadHist()}
+
+async function startDl(){
+  const portals=[...document.querySelectorAll("#portals input:checked")].map(i=>i.value);
+  if(!portals.length) return toast("เลือกอย่างน้อย 1 เว็บ");
+  await api("/api/session/start",{portals,company:$("dlComp").value});loadState();
+}
+async function startSort(){
+  if(!srcFolder) return toast("กรุณาเลือกโฟลเดอร์ต้นทาง");
+  await api("/api/sort",{folder:srcFolder,move:$("move").checked,company:$("sortComp").value});loadState();
+}
+
+/* ---------- folder picker ---------- */
+let picking=false;
+async function pickFolder(which){
+  if(picking) return; picking=true; pickFor=which;
+  const btns=document.querySelectorAll(".pickBtn"); btns.forEach(b=>{b.disabled=true;b.dataset.l=b.textContent;b.textContent="กำลังเปิดหน้าต่าง…"});
+  const initial=which==="out"?S.config.output_root:(srcFolder||S.default_folder);
+  try{
+    const r=await api("/api/fs/native",{initial,title:which==="out"?"เลือกโฟลเดอร์ปลายทาง":"เลือกโฟลเดอร์ต้นทาง"});
+    if(r.path){fs.path=r.path;await choose()}
+  }catch(e){ /* หน้าต่าง Windows เปิดไม่ได้ → ใช้ตัวเลือกในหน้าเว็บแทน */
+    $("modal").classList.add("on");await fsList(initial);
+  }finally{picking=false;btns.forEach(b=>{b.disabled=false;b.textContent=b.dataset.l})}
+}
+function closeModal(){$("modal").classList.remove("on")}
+async function fsList(p){
+  fs=await api("/api/fs/list?path="+encodeURIComponent(p||""));
+  $("fsPath").textContent=fs.path;
+  $("roots").innerHTML=fs.roots.map(r=>`<button class="sm" onclick='fsList(${JSON.stringify(r)})'>${esc(r)}</button>`).join("");
+  $("dirs").innerHTML=fs.dirs.length?fs.dirs.map(d=>`<div class="dir" onclick='fsList(${JSON.stringify(fs.path.replace(/[\\/]$/,"")+(fs.path.includes("\\")?"\\":"/")+d)})'>📁 ${esc(d)}</div>`).join(""):`<div class="empty">ไม่มีโฟลเดอร์ย่อย</div>`;
+}
+function fsUp(){if(fs.parent)fsList(fs.parent)}
+async function mkdir(){const n=$("newDir").value.trim();if(!n)return;const r=await api("/api/fs/mkdir",{path:fs.path,name:n});$("newDir").value="";fsList(r.path)}
+async function nativePick(){const r=await api("/api/fs/native",{initial:fs.path});if(r.path){fs.path=r.path;choose()}}
+async function choose(){
+  closeModal();
+  if(pickFor==="out"){await saveCfg({output_root:fs.path});toast("ตั้งโฟลเดอร์ปลายทางแล้ว")}
+  else{srcFolder=fs.path;$("srcPath").textContent=srcFolder}
+}
+
+/* ---------- queue ---------- */
+const ST={pending:["รอตรวจ",""],saved:["บันทึกแล้ว","b-saved"],duplicate:["ซ้ำ ข้ามแล้ว","b-dup"],skipped:["ข้าม","b-skip"],error:["ผิดพลาด","b-err"]};
+function formOpts(cur){return S.forms.map(f=>`<option value="${f.code}" ${f.code===cur?"selected":""}>${esc(f.label)}</option>`).join("")+`<option value="อื่นๆ" ${cur==="อื่นๆ"?"selected":""}>อื่นๆ / ไม่ทราบ</option>`}
+function render(){
+  const pend=items.filter(i=>i.status==="pending").length, saved=items.filter(i=>i.status==="saved").length;
+  $("counts").textContent=items.length?`ทั้งหมด ${items.length} · รอตรวจ ${pend} · บันทึกแล้ว ${saved}`:"";
+  if(!items.length){$("list").innerHTML=`<div class="empty">ยังไม่มีไฟล์ — เริ่มดาวน์โหลดหรือจัดไฟล์จากโฟลเดอร์</div>`;return}
+  $("list").innerHTML=items.map(it=>{
+    const [st,cls]=ST[it.status]||[it.status,""], p=it.status==="pending"||it.status==="error";
+    const comps=S.config.companies.map(c=>`<option value="${c.tax_id}" ${c.tax_id===it.company?"selected":""}>${esc(c.name)}</option>`).join("");
+    return `<div class="item ${sel===it.id?"sel":""}" onclick="select('${it.id}')">
+      <div class="top"><span class="name" title="${esc(it.orig)}">${esc(it.orig)}</span>
+        ${it.guessed&&p?`<span class="badge b-warn">⚠ ตรวจงวด</span>`:""}<span class="badge ${cls}">${st}</span></div>
+      ${p?`<div class="grid4" onclick="event.stopPropagation()">
+        <select onfocus="editing=true" onblur="editing=false" onchange="upd('${it.id}',{form:this.value})">${formOpts(it.form)}</select>
+        <select onfocus="editing=true" onblur="editing=false" onchange="upd('${it.id}',{kind:this.value})">${S.kinds.map(k=>`<option ${k===it.kind?"selected":""}>${k}</option>`).join("")}</select>
+        <input type="text" value="${esc(it.period)}" placeholder="2569-09" onfocus="editing=true" onblur="editing=false;if(this.value!=='${esc(it.period)}')upd('${it.id}',{period:this.value})">
+        <select onfocus="editing=true" onblur="editing=false" onchange="upd('${it.id}',{company:this.value})">${comps}</select></div>`:""}
+      <div class="dest">${it.status==="saved"?"✓ ":"→ "}${esc(it.dest)}${it.error?` — <span style="color:var(--bad)">${esc(it.error)}</span>`:""}</div>
+      ${p?`<div class="acts" onclick="event.stopPropagation()"><button class="sm primary" onclick="upd('${it.id}',{action:'save'})">บันทึก</button><button class="sm" onclick="upd('${it.id}',{action:'skip'})">ข้าม</button></div>`:""}
+    </div>`}).join("");
+}
+async function refresh(){if(editing)return;const r=await api("/api/queue");const sig=JSON.stringify(r.items);if(sig!==refresh._s){refresh._s=sig;items=r.items;render()}}
+async function upd(id,patch){editing=false;await api("/api/item/"+id,patch);refresh._s=null;await refresh();if(patch.action==="save")toast("บันทึกแล้ว")}
+function select(id){
+  sel=id;render();const it=items.find(i=>i.id===id);
+  $("preview").innerHTML=it&&it.is_pdf?`<iframe src="/api/item/${id}/file?t=${TOKEN}"></iframe>`:"ไฟล์นี้ไม่ใช่ PDF — ไม่มีตัวอย่าง";
+}
+async function saveAll(){const r=await api("/api/save-all",{});toast(`บันทึก ${r.saved} ไฟล์ (รายการที่ระบบเดาหรือไม่ทราบแบบ ยังรอให้ตรวจ)`);refresh._s=null;refresh()}
+
+async function loadHist(){
+  const r=await api("/api/recent");
+  $("hist").innerHTML=r.rows.length?r.rows.map(x=>`<tr><td>${esc(x["บันทึกเมื่อ"])}</td><td>${esc(x["บริษัท"])}</td><td>${esc(x["แบบ"])}</td><td>${esc(x["ประเภท"])}</td><td>${esc(x["ปี"])}${x["เดือน"]?"-"+String(x["เดือน"]).padStart(2,"0"):""}</td><td class="path2">${esc(x["ไฟล์"])}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">ยังไม่มีประวัติ</td></tr>`;
+}
+
+loadState(true).then(refresh);
+setInterval(()=>{loadState();refresh()},1500);
+</script>
+</body>
+</html>
