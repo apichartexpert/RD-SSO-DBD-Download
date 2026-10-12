@@ -855,6 +855,15 @@ def fmt_rng(rng):
     return f"{th[m1]} {y1} – {th[m2]} {y2}"
 
 
+@app.get("/api/debug")
+def api_debug():
+    try:
+        txt = DEBUG_LOG.read_text(encoding="utf-8")[-12000:] if DEBUG_LOG.exists() else ""
+    except Exception as e:
+        txt = f"อ่านบันทึกไม่ได้: {e}"
+    return jsonify(text=txt or "ยังไม่มีบันทึก")
+
+
 @app.post("/api/scan")
 def api_scan():
     if SESSION.state != "running":
@@ -973,7 +982,7 @@ def api_scan_download():
             ok += good
         msg = f"ดาวน์โหลดเสร็จ {ok}/{len(todo)} รายการ — ตรวจและบันทึกในคิวเอกสารด้านล่าง"
         if ok < len(todo):
-            msg += " · รายการที่ไม่สำเร็จถูกบันทึกรายละเอียดไว้ใน _debug\\fetch_log.txt"
+            msg += " · กด 'ดูบันทึก' เพื่อดูรายละเอียดของรายการที่ไม่สำเร็จ"
         SESSION.scan.update(state="idle", msg=msg)
     SESSION.call(job, wait=False)
     return jsonify(scan_public())

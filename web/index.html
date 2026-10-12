@@ -279,6 +279,7 @@ td.path2{word-break:break-all;color:var(--muted)}
             <select id="fM2"></select><select id="fY2"></select>
             <label class="switch" style="margin:0"><input type="checkbox" id="fSetYear" checked> ตั้งปีบนเว็บให้ด้วย (ถ้าหน้านั้นมีช่องเลือกปี)</label>
             <button class="primary" id="btnScan" onclick="scan()">ค้นหาในหน้าเว็บ</button>
+            <button class="sm" onclick="showDebug()" title="สิ่งที่เว็บทำเมื่อดาวน์โหลดไม่สำเร็จ (ไม่มีรหัสผ่าน/เนื้อหาเอกสาร)">ดูบันทึก</button>
           </div>
           <div class="msg" id="fMsg"></div>
           <div id="fResult"></div>
@@ -470,6 +471,13 @@ function fPick(m){
   if(m==="none")fSel.clear();
   else list.forEach(i=>{const r=i.kind==="ใบเสร็จ";if(m==="all"||(m==="receipt"&&r)||(m==="form"&&!r))fSel.add(i.id);else if(m!=="all")fSel.delete(i.id)});
   renderF();
+}
+async function showDebug(){
+  const r=await api("/api/debug");
+  $("fResult").insertAdjacentHTML("afterbegin",`<div class="card" style="margin-top:10px"><div class="row" style="justify-content:space-between"><b>บันทึกการดาวน์โหลดที่ไม่สำเร็จ</b>
+    <span><button class="sm" onclick="navigator.clipboard.writeText(this.closest('.card').querySelector('pre').innerText);toast('คัดลอกแล้ว — วางในแชตได้เลย')">คัดลอก</button>
+    <button class="sm" onclick="this.closest('.card').remove()">ปิด</button></span></div>
+    <pre style="white-space:pre-wrap;font-size:12px;max-height:300px;overflow:auto">${esc(r.text)}</pre></div>`);
 }
 async function fDownload(){
   const list=F.items.filter(i=>fShowAll||i.match), ids=[...fSel].filter(id=>list.some(i=>i.id===id));
