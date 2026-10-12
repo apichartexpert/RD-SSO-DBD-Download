@@ -39,7 +39,7 @@ if not defined PY (
 echo Using: %PY%
 
 echo Installing required libraries...
-%PY% -m pip install --disable-pip-version-check flask pypdf pyyaml playwright
+%PY% -m pip install --disable-pip-version-check flask pypdf pyyaml playwright keyring
 if errorlevel 1 (
   echo [X] Library install failed. Check the internet connection and try again.
   pause

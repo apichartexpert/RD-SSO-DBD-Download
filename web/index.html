@@ -67,6 +67,29 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .linkbtn{background:none;border:none;padding:0;color:var(--accent);font-size:12px;cursor:pointer;text-decoration:underline}
 input.pathIn{font-size:13px}
 .finder{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.vbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.vtabs{display:flex;gap:4px;overflow:auto;margin-bottom:8px;padding-bottom:2px}
+.vtab{display:flex;align-items:center;gap:6px;max-width:240px;border:1px solid var(--line);border-radius:8px 8px 0 0;padding:5px 8px;font-size:13px;background:var(--bg);cursor:pointer;white-space:nowrap}
+.vtab.on{background:var(--panel);border-color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.vtab span{overflow:hidden;text-overflow:ellipsis}
+.vtab b{font-weight:400;color:var(--muted);padding:0 2px}
+.vtab b:hover{color:var(--bad)}
+.vurl{flex:1;min-width:200px;font-size:13px}
+.screen{position:relative;width:100%;height:72vh;min-height:480px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;outline:none}
+.screen img{display:block;width:100%;height:100%;object-fit:contain;object-position:top left;user-select:none;-webkit-user-drag:none;cursor:default}
+.screen.focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.screen .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--muted);text-align:center;padding:20px;background:var(--bg)}
+#kb{position:absolute;left:-9999px;top:0;width:10px;height:10px;opacity:0}
+.vdlg{position:absolute;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:3}
+.vdlg.on{display:flex}
+.vdlg .box{max-width:460px;padding:16px}
+.vhint{font-size:12px;color:var(--muted);margin-top:6px}
+.login-grid{display:flex;flex-direction:column;gap:10px;margin:10px 0 6px;font-size:13px}
+.lrow{display:grid;grid-template-columns:38px minmax(0,1fr);gap:6px;align-items:start}
+.lrow b{padding-top:6px}
+.lrow .row input{flex:1;min-width:0}
+.login-grid input{padding:5px 7px;font-size:13px}
+.comp .lg{font-size:12px;color:var(--muted)}
 .finder h3{font-size:15px;margin:0 0 4px}
 .steps{font-size:13px;color:var(--muted);margin:0 0 10px;padding-left:18px}
 .steps li{margin:2px 0}
@@ -168,6 +191,11 @@ td.path2{word-break:break-all;color:var(--muted)}
       <select id="channel" onchange="saveOpt()">
         <option value="msedge">Microsoft Edge (แนะนำ)</option><option value="chrome">Google Chrome</option><option value="">Chromium (ติดมากับโปรแกรม)</option>
       </select>
+      <label class="f">การแสดงเว็บไซต์ RD / SSO / DBD</label>
+      <select id="bmode" onchange="saveOpt()">
+        <option value="embedded">แสดงในหน้าโปรแกรม (แนะนำ)</option><option value="window">เปิดเป็นหน้าต่างแยก</option>
+      </select>
+      <label class="switch"><input type="checkbox" id="autofill" onchange="saveOpt()"> กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ให้อัตโนมัติ</label>
       <label class="switch"><input type="checkbox" id="confirm" onchange="saveOpt()"> ตรวจทีละไฟล์ก่อนบันทึก</label>
       <div class="hint">ปิดตัวเลือกนี้เพื่อบันทึกอัตโนมัติทันทีที่ได้รับไฟล์</div>
     </div>
@@ -190,25 +218,9 @@ td.path2{word-break:break-all;color:var(--muted)}
           <button class="primary" id="btnStart" onclick="startDl()">เปิดทุกเว็บที่เลือก</button>
           <button class="danger" id="btnStop" onclick="api('/api/session/stop',{})">ปิดเบราว์เซอร์</button>
         </div>
-        <div class="hint" style="margin-top:8px">เว็บจะเปิดใน Microsoft Edge ที่โปรแกรมควบคุม — ใส่ชื่อผู้ใช้/รหัสผ่านในหน้านั้นด้วยตัวเอง (โปรแกรมไม่เห็นและไม่เก็บรหัสผ่าน)
-          จากนั้นกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวด้านล่างทันที</div>
+        <div class="hint" style="margin-top:8px">เว็บจะเปิดในส่วน <b>เว็บไซต์</b> ด้านล่าง — ล็อกอินที่นั่น (ถ้าจำรหัสไว้ โปรแกรมกรอกให้) แล้วกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวเอกสารทันที
+          · แต่ละบริษัทมี session ล็อกอินแยกกัน เปลี่ยนบริษัทแล้วเปิดเว็บใหม่ได้เลย</div>
 
-        <div class="finder" id="finder">
-          <h3>ค้นหาแบบและใบเสร็จอัตโนมัติ</h3>
-          <ol class="steps">
-            <li>ล็อกอินในหน้าต่าง Edge แล้วเข้า <b>หน้าประวัติการยื่นแบบ / พิมพ์ใบเสร็จ</b></li>
-            <li>เลือกปี แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมจะอ่านรายการแบบและใบเสร็จในหน้านั้นมาให้เลือก</li>
-            <li>ติ๊กรายการที่ต้องการ แล้วกด <b>ดาวน์โหลดที่เลือก</b></li>
-          </ol>
-          <div class="frow">
-            <label>ปีภาษี</label>
-            <select id="fYear"></select>
-            <label class="switch" style="margin:0"><input type="checkbox" id="fSetYear" checked> ตั้งปีบนเว็บให้ด้วย (ถ้าหน้านั้นมีช่องเลือกปี)</label>
-            <button class="primary" id="btnScan" onclick="scan()">ค้นหาในหน้าเว็บ</button>
-          </div>
-          <div class="msg" id="fMsg"></div>
-          <div id="fResult"></div>
-        </div>
       </div>
 
       <div id="t-sort" hidden>
@@ -227,6 +239,46 @@ td.path2{word-break:break-all;color:var(--muted)}
         <div style="overflow:auto"><table><thead><tr><th>บันทึกเมื่อ</th><th>บริษัท</th><th>แบบ</th><th>ประเภท</th><th>งวด</th><th>ไฟล์</th></tr></thead><tbody id="hist"></tbody></table></div>
       </div>
       <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card" id="vcard">
+      <div class="qhead"><h2>เว็บไซต์</h2><span class="counts" id="vCompany"></span><span style="flex:1"></span>
+        <button class="sm" id="vFill" onclick="vAutofill()">กรอกชื่อผู้ใช้/รหัสผ่าน</button>
+        <button class="sm" id="vRemember" onclick="vRemember()">จำชื่อผู้ใช้/รหัสผ่านในหน้านี้</button></div>
+      <div class="vtabs" id="vtabs"></div>
+      <div class="vbar">
+        <button class="sm" title="ย้อนกลับ" onclick="vNav('back')">←</button>
+        <button class="sm" title="ไปข้างหน้า" onclick="vNav('forward')">→</button>
+        <button class="sm" title="โหลดใหม่" onclick="vNav('reload')">⟳</button>
+        <input type="text" class="vurl" id="vurl" spellcheck="false" onfocus="editing=true" onblur="editing=false"
+               onkeydown="if(event.key==='Enter'){vNav('go',this.value);this.blur()}">
+      </div>
+      <div class="screen" id="screen" tabindex="-1">
+        <img id="scr" alt="" draggable="false">
+        <textarea id="kb" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+        <div class="ph" id="vph"><div style="font-size:15px">ยังไม่ได้เปิดเว็บ</div>
+          <div>กด <b>"เปิดเว็บไซต์เพื่อเข้าสู่ระบบ →"</b> ในการ์ด RD / SSO / DBD ด้านบน เว็บจะแสดงที่นี่</div></div>
+        <div class="vdlg" id="vdlg"><div class="box card"><div id="vdlgMsg" style="white-space:pre-wrap;margin-bottom:10px"></div>
+          <input type="text" id="vdlgIn" style="display:none;margin-bottom:10px">
+          <div class="row" style="justify-content:flex-end"><button id="vdlgNo" onclick="vDialog(false)">ยกเลิก</button><button class="primary" onclick="vDialog(true)">ตกลง</button></div></div></div>
+      </div>
+      <div class="vhint">คลิกในหน้าเว็บแล้วพิมพ์ได้ตามปกติ (รองรับภาษาไทย และวางข้อความด้วย Ctrl+V) · หน้าต่างที่เว็บเปิดใหม่ (เช่น ใบเสร็จ) จะขึ้นเป็นแท็บด้านบน</div>
+        <div class="finder" id="finder">
+          <h3>ค้นหาแบบและใบเสร็จอัตโนมัติ</h3>
+          <ol class="steps">
+            <li>ล็อกอินในส่วนเว็บไซต์ด้านบน แล้วเข้า <b>หน้าประวัติการยื่นแบบ / พิมพ์ใบเสร็จ</b> ให้เห็นตารางรายการ</li>
+            <li>เลือกปี แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมจะอ่านรายการแบบและใบเสร็จในหน้านั้นมาให้เลือก</li>
+            <li>ติ๊กรายการที่ต้องการ แล้วกด <b>ดาวน์โหลดที่เลือก</b></li>
+          </ol>
+          <div class="frow">
+            <label>ปีภาษี</label>
+            <select id="fYear"></select>
+            <label class="switch" style="margin:0"><input type="checkbox" id="fSetYear" checked> ตั้งปีบนเว็บให้ด้วย (ถ้าหน้านั้นมีช่องเลือกปี)</label>
+            <button class="primary" id="btnScan" onclick="scan()">ค้นหาในหน้าเว็บ</button>
+          </div>
+          <div class="msg" id="fMsg"></div>
+          <div id="fResult"></div>
+        </div>
     </div>
 
     <div class="card">
@@ -283,7 +335,8 @@ async function loadState(first){
   $("yearFmt").value=c.year_format||"BE";
   $("channel").value=c.browser_channel||"";
   $("confirm").checked=!!c.confirm_each_file;
-  $("compList").innerHTML=c.companies.length?c.companies.map((x,i)=>`<div class="comp"><div>${esc(x.name)}<small>${x.tax_id}</small></div><button class="sm danger" onclick="delCompany(${i})">ลบ</button></div>`).join(""):`<div class="hint">ยังไม่มีบริษัท — เพิ่มอย่างน้อย 1 บริษัท</div>`;
+  $("bmode").value=c.browser_mode||"embedded"; $("autofill").checked=c.auto_fill!==false;
+  if(!editing||!document.activeElement||!document.activeElement.closest("#compList")) renderCompanies(c);
   document.querySelectorAll(".compSel").forEach(s=>{const v=s.value;s.innerHTML=c.companies.map(x=>`<option value="${x.tax_id}">${esc(x.name)}</option>`).join("");if(v)s.value=v});
   if(first) renderPortals();
   if(document.activeElement!==$("outPath")) $("outPath").value=c.output_root;
@@ -297,7 +350,8 @@ async function loadState(first){
 }
 
 async function saveCfg(patch){await api("/api/config",patch);await loadState()}
-function saveOpt(){saveCfg({year_format:$("yearFmt").value,browser_channel:$("channel").value,confirm_each_file:$("confirm").checked})}
+function saveOpt(){saveCfg({year_format:$("yearFmt").value,browser_channel:$("channel").value,confirm_each_file:$("confirm").checked,
+  browser_mode:$("bmode").value,auto_fill:$("autofill").checked})}
 async function addCompany(){
   const name=$("cName").value.trim(), tax=$("cTax").value.replace(/\D/g,"");
   if(tax.length!==13) return toast("เลขผู้เสียภาษีต้องมี 13 หลัก");
@@ -305,8 +359,30 @@ async function addCompany(){
   await saveCfg({companies:[...S.config.companies,{name:name||tax,tax_id:tax}]});
   $("cName").value="";$("cTax").value="";toast("เพิ่มบริษัทแล้ว");
 }
+let openLogin=null;
+function renderCompanies(c){
+  $("compList").innerHTML=c.companies.length?c.companies.map((x,i)=>{
+    const saved=["rd","sso","dbd"].filter(k=>x.logins[k].username||x.logins[k].has_password).map(k=>k.toUpperCase());
+    return `<div class="comp" style="flex-wrap:wrap"><div style="flex:1">${esc(x.name)}<small>${x.tax_id}</small>
+       <div class="lg">${saved.length?"จำล็อกอินไว้: "+saved.join(", "):"ยังไม่ได้จำล็อกอิน"}</div></div>
+       <button class="sm" onclick="openLogin=openLogin==='${x.tax_id}'?null:'${x.tax_id}';renderCompanies(S.config)">ล็อกอิน</button>
+       <button class="sm danger" onclick="delCompany(${i})">ลบ</button>
+       ${openLogin===x.tax_id?`<div style="flex-basis:100%"><div class="login-grid">
+         ${["rd","sso","dbd"].map(k=>`<div class="lrow"><b>${k.toUpperCase()}</b><div>
+           <input type="text" id="lu-${x.tax_id}-${k}" placeholder="ชื่อผู้ใช้ ${k.toUpperCase()}" value="${esc(x.logins[k].username)}" onfocus="editing=true" onblur="editing=false">
+           <div class="row" style="margin-top:4px"><input type="password" id="lp-${x.tax_id}-${k}" placeholder="${x.logins[k].has_password?"●●●● จำไว้แล้ว":"รหัสผ่าน"}" autocomplete="new-password" onfocus="editing=true" onblur="editing=false">
+           <button class="sm" onclick="saveLogin('${x.tax_id}','${k}')">บันทึก</button>${x.logins[k].has_password?`<button class="sm danger" title="ลบรหัสผ่านที่จำไว้" onclick="saveLogin('${x.tax_id}','${k}',true)">×</button>`:""}</div></div></div>`).join("")}
+         </div><div class="hint">${S.creds_available?"รหัสผ่านเก็บใน Windows Credential Manager ของเครื่องนี้ ไม่ได้เก็บในไฟล์ของโปรแกรม":"⚠ เครื่องนี้ยังเก็บรหัสผ่านไม่ได้ (รัน run_web.bat ใหม่เพื่อติดตั้ง keyring) — จำได้เฉพาะชื่อผู้ใช้"}</div></div>`:""}
+     </div>`}).join(""):`<div class="hint">ยังไม่มีบริษัท — เพิ่มอย่างน้อย 1 บริษัท</div>`;
+}
+async function saveLogin(tid,k,clear){
+  const u=$(`lu-${tid}-${k}`).value.trim(), p=$(`lp-${tid}-${k}`).value;
+  editing=false;
+  const r=await api("/api/company/login",{tax_id:tid,portal:k,username:u,password:p||null,clear_password:!!clear});
+  toast(r.msg);await loadState();
+}
 async function delCompany(i){
-  const c=S.config.companies[i]; if(!confirm(`ลบ ${c.name} ออกจากรายการ? (ไฟล์ที่บันทึกแล้วไม่ถูกลบ)`))return;
+  const c=S.config.companies[i]; if(!confirm(`ลบ ${c.name} ออกจากรายการ? (ไฟล์ที่บันทึกแล้วไม่ถูกลบ · ชื่อผู้ใช้/รหัสผ่านที่จำไว้ของบริษัทนี้จะถูกลบ)`))return;
   await saveCfg({companies:S.config.companies.filter((_,j)=>j!==i)});
 }
 
@@ -327,7 +403,8 @@ function renderPortals(){
 async function openPortal(k){
   if(!S.config.companies.length) return toast("กรุณาเพิ่มบริษัทก่อน");
   await api("/api/portal/open",{portal:k,company:$("dlComp").value});
-  toast(`กำลังเปิด ${S.portal_info[k].name} ในเบราว์เซอร์`);loadState();
+  toast(`กำลังเปิด ${S.portal_info[k].name}`);loadState();
+  if($("bmode").value!=="window") setTimeout(()=>$("vcard").scrollIntoView({behavior:"smooth",block:"start"}),400);
 }
 async function saveUrl(k){
   const urls={};Object.keys(S.portal_info).forEach(x=>urls[x]=x===k?$("url-"+k).value.trim():S.portal_info[x].url);
@@ -465,6 +542,72 @@ async function loadHist(){
   const r=await api("/api/recent");
   $("hist").innerHTML=r.rows.length?r.rows.map(x=>`<tr><td>${esc(x["บันทึกเมื่อ"])}</td><td>${esc(x["บริษัท"])}</td><td>${esc(x["แบบ"])}</td><td>${esc(x["ประเภท"])}</td><td>${esc(x["ปี"])}${x["เดือน"]?"-"+String(x["เดือน"]).padStart(2,"0"):""}</td><td class="path2">${esc(x["ไฟล์"])}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">ยังไม่มีประวัติ</td></tr>`;
 }
+
+/* ---------- เว็บไซต์ในหน้าโปรแกรม ---------- */
+let V={running:false}, vSeq=0, vW=1280, vH=800, vQ=[], vLoop=false, vLastMove=0, vSize="";
+const scr=$("scr"), screenEl=$("screen"), kb=$("kb");
+function vPos(e){const r=scr.getBoundingClientRect();
+  // ภาพถูกวาดแบบ object-fit:contain ชิดซ้ายบน
+  const sc=Math.min(r.width/vW, r.height/vH)||1;
+  return {x:Math.max(0,Math.min(vW,(e.clientX-r.left)/sc)), y:Math.max(0,Math.min(vH,(e.clientY-r.top)/sc))};}
+function vSend(ev){vQ.push(ev)}
+setInterval(async()=>{if(!vQ.length)return;const evs=vQ.splice(0,vQ.length);try{await api("/api/view/input",{events:evs})}catch(e){}},35);
+scr.addEventListener("mousedown",e=>{e.preventDefault();kb.focus();const p=vPos(e);vSend({t:"down",x:p.x,y:p.y,button:["left","middle","right"][e.button]||"left",n:e.detail||1})});
+scr.addEventListener("mouseup",e=>{const p=vPos(e);vSend({t:"up",x:p.x,y:p.y,button:["left","middle","right"][e.button]||"left",n:e.detail||1})});
+scr.addEventListener("mousemove",e=>{const t=Date.now();if(t-vLastMove<60)return;vLastMove=t;const p=vPos(e);vSend({t:"move",x:p.x,y:p.y})});
+scr.addEventListener("contextmenu",e=>e.preventDefault());
+screenEl.addEventListener("wheel",e=>{if(!V.running)return;e.preventDefault();const p=vPos(e);vSend({t:"wheel",x:p.x,y:p.y,dx:e.deltaX,dy:e.deltaY})},{passive:false});
+kb.addEventListener("focus",()=>screenEl.classList.add("focus"));
+kb.addEventListener("blur",()=>screenEl.classList.remove("focus"));
+let composing=false;
+kb.addEventListener("compositionstart",()=>composing=true);
+kb.addEventListener("compositionend",e=>{composing=false;if(e.data)vSend({t:"text",text:e.data});kb.value=""});
+kb.addEventListener("input",e=>{if(composing)return;if(kb.value){vSend({t:"text",text:kb.value});kb.value=""}});
+kb.addEventListener("paste",e=>{e.preventDefault();const t=(e.clipboardData||window.clipboardData).getData("text");if(t)vSend({t:"text",text:t})});
+const VK=new Set(["Enter","Tab","Backspace","Delete","Escape","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown","F5"]);
+kb.addEventListener("keydown",e=>{
+  if(e.isComposing||composing)return;
+  const ctl=e.ctrlKey||e.metaKey;
+  if(ctl&&e.key.toLowerCase()==="v")return;            // ให้ paste event จัดการ
+  if(VK.has(e.key)||(ctl&&e.key.length===1)){e.preventDefault();
+    vSend({t:"key",key:e.key.length===1?e.key.toLowerCase():e.key,control:e.ctrlKey,alt:e.altKey,shift:e.shiftKey&&!VK.has(e.key)?false:e.shiftKey,meta:e.metaKey})}
+});
+new ResizeObserver(()=>vResize()).observe(screenEl);
+function vResize(){const r=screenEl.getBoundingClientRect();const w=Math.round(r.width),h=Math.round(r.height);
+  const key=w+"x"+h;if(!V.running||key===vSize||w<300)return;vSize=key;vSend({t:"resize",w,h})}
+async function vFrames(){
+  if(vLoop)return;vLoop=true;
+  while(V.running){
+    try{const r=await fetch(`/api/view/frame?after=${vSeq}&t=${TOKEN}`,{headers:{"X-Token":TOKEN}});
+      if(r.status===200){vSeq=+r.headers.get("X-Seq");vW=+r.headers.get("X-W")||vW;vH=+r.headers.get("X-H")||vH;
+        const b=await r.blob();const u=URL.createObjectURL(b);const old=scr.src;scr.src=u;if(old&&old.startsWith("blob:"))setTimeout(()=>URL.revokeObjectURL(old),1000);
+        $("vph").style.display="none";}
+      else await new Promise(z=>setTimeout(z,150));
+    }catch(e){await new Promise(z=>setTimeout(z,500))}
+  }
+  vLoop=false;
+}
+async function vState(){
+  try{V=await api("/api/view/state")}catch(e){return}
+  const emb=V.mode!=="window";
+  $("vcard").style.display=emb?"":"none";
+  if(!V.running){$("vph").style.display="";scr.removeAttribute("src");vSeq=0;vSize="";$("vtabs").innerHTML="";$("vCompany").textContent="";return}
+  vResize();vFrames();
+  const comp=(S&&S.config.companies.find(c=>c.tax_id===V.company))||{};
+  $("vCompany").textContent=comp.name?`· ${comp.name} (session แยกของบริษัทนี้)`:"";
+  $("vtabs").innerHTML=(V.tabs||[]).map(t=>`<div class="vtab ${t.active?"on":""}" title="${esc(t.url)}" onclick="vSend({t:'tab',i:${t.i}})"><span>${esc(t.title||t.url)}</span>${(V.tabs.length>1)?`<b title="ปิดแท็บ" onclick="event.stopPropagation();vSend({t:'closetab',i:${t.i}})">×</b>`:""}</div>`).join("");
+  if(document.activeElement!==$("vurl"))$("vurl").value=V.url||"";
+  $("vFill").disabled=!V.portal; $("vRemember").disabled=!V.portal;
+  $("vFill").title=V.has_login?"กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ของ "+V.portal_name:"ยังไม่ได้จำล็อกอินของเว็บนี้";
+  const dg=V.dialog;
+  $("vdlg").classList.toggle("on",!!dg);
+  if(dg){$("vdlgMsg").textContent=dg.message;$("vdlgIn").style.display=dg.type==="prompt"?"":"none";$("vdlgNo").style.display=dg.type==="alert"?"none":""}
+}
+function vNav(what,url){vSend({t:"nav",what,url});kb.focus()}
+async function vDialog(ok){await api("/api/view/dialog",{accept:ok,text:$("vdlgIn").value});$("vdlg").classList.remove("on")}
+async function vAutofill(){try{const r=await api("/api/view/autofill",{});toast(r.msg)}catch(e){}}
+async function vRemember(){try{const r=await api("/api/view/remember",{});toast(r.msg);loadState()}catch(e){}}
+setInterval(vState,700);
 
 loadState(true).then(refresh);
 setInterval(()=>{loadState();refresh();pollF()},1500);

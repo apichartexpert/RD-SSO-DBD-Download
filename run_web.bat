@@ -39,10 +39,10 @@ if not defined PY (
 echo Using: %PY%
 
 rem ---- install missing libraries automatically ----
-%PY% -c "import flask, playwright, pypdf, yaml" >nul 2>&1
+%PY% -c "import flask, playwright, pypdf, yaml, keyring" >nul 2>&1
 if errorlevel 1 (
   echo Installing required libraries, please wait...
-  %PY% -m pip install --disable-pip-version-check flask pypdf pyyaml playwright
+  %PY% -m pip install --disable-pip-version-check flask pypdf pyyaml playwright keyring
   if errorlevel 1 (
     echo.
     echo [X] Library install failed. Check the internet connection and try again.

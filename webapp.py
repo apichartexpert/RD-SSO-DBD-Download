@@ -23,6 +23,8 @@ from flask import Flask, abort, jsonify, request, send_file
 
 import taxdocs as td
 import scanner
+import viewer
+import creds
 
 HOST, PORT = "127.0.0.1", 8765
 HERE = td.HERE
@@ -63,6 +65,8 @@ DEFAULT_CFG = {
     "confirm_each_file": True,
     "browser_channel": "msedge",
     "browser_profile": "browser_profile",
+    "browser_mode": "embedded",      # embedded = แสดงเว็บในหน้าโปรแกรม, window = หน้าต่างแยก
+    "auto_fill": True,               # กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ให้อัตโนมัติ
     "portal_urls": {},
     "config_version": 2,
 }
@@ -104,7 +108,11 @@ def load_cfg():
     for c in cfg.get("companies") or []:
         tid = "".join(ch for ch in str(c.get("tax_id", "")) if ch.isdigit())
         if tid:
-            comps.append({"name": str(c.get("name") or tid), "tax_id": tid})
+            logins = {}
+            for k, v in (c.get("logins") or {}).items():
+                if isinstance(v, dict) and v.get("username"):
+                    logins[str(k)] = {"username": str(v["username"])}
+            comps.append({"name": str(c.get("name") or tid), "tax_id": tid, "logins": logins})
     cfg["companies"] = comps
     return cfg
 
@@ -210,6 +218,42 @@ def save_item(item, move=None):
 
 
 # ---------------------------------------------------------------- เบราว์เซอร์ (Playwright)
+def public_company(c):
+    logins = {}
+    for k in PORTAL_INFO:
+        logins[k] = {"username": (c.get("logins") or {}).get(k, {}).get("username", ""),
+                     "has_password": creds.has_password(c["tax_id"], k)}
+    return {"name": c["name"], "tax_id": c["tax_id"], "logins": logins}
+
+
+def portal_for_url(url):
+    host = (td.urlparse(url or "").hostname or "").lower()
+    for k, h in (("rd", "rd.go.th"), ("sso", "sso.go.th"), ("dbd", "dbd.go.th")):
+        if host == h or host.endswith("." + h):
+            return k
+    for k in PORTAL_INFO:                       # ลิงก์ที่ผู้ใช้แก้เอง
+        h2 = (td.urlparse(portal_url(k)).hostname or "").lower()
+        if h2 and host == h2:
+            return k
+    return None
+
+
+def login_for(tax_id, portal):
+    c = company_by_id(tax_id)
+    if not c or not portal:
+        return "", None
+    user = (c.get("logins") or {}).get(portal, {}).get("username", "")
+    return user, creds.get_password(c["tax_id"], portal)
+
+
+def profile_dir(tax_id):
+    """แต่ละบริษัทมีโปรไฟล์เบราว์เซอร์ของตัวเอง → session การล็อกอินแยกกัน"""
+    return HERE / "profiles" / (td.safe(tax_id) if tax_id else "default")
+
+
+UA_CACHE = {}
+
+
 class Session:
     def __init__(self):
         self.thread = None
@@ -219,6 +263,8 @@ class Session:
         self.open_q = []          # เว็บที่ขอให้เปิดเพิ่มระหว่างเบราว์เซอร์ทำงาน
         self.company = None
         self.cmds = queue.Queue() # คำสั่งที่ต้องรันใน thread ของเบราว์เซอร์
+        self.view = None          # viewer.View เมื่อแสดงเว็บในหน้าโปรแกรม
+        self.mode = "embedded"
         self.scan = {"state": "idle", "items": [], "msg": "", "year": None}
 
     def call(self, fn, wait=True, timeout=120):
@@ -238,10 +284,20 @@ class Session:
 
     def open_portal(self, key, company):
         """เปิดเว็บของหน่วยงานในเบราว์เซอร์ที่โปรแกรมควบคุม (ไฟล์ที่ดาวน์โหลดจึงถูกดักจับได้)"""
+        company = company or self.company or (CFG["companies"][0]["tax_id"] if CFG["companies"] else None)
         if self.state in ("running", "starting") and self.busy():
-            self.open_q.append(key)
+            if company and company != self.company:      # เปลี่ยนบริษัท → ใช้โปรไฟล์ของบริษัทนั้น
+                self.restart([key], company)
+            else:
+                self.open_q.append(key)
         else:
             self.start_browser([key], company)
+
+    def restart(self, portals, company):
+        self.stop.set()
+        if self.thread:
+            self.thread.join(20)
+        self.start_browser(portals, company)
 
     def start_browser(self, portals, company):
         self.stop.clear()
@@ -304,25 +360,78 @@ class Session:
 
         try:
             with sync_playwright() as pw:
-                kw = dict(headless=False, accept_downloads=True, viewport=None)
+                embedded = CFG.get("browser_mode", "embedded") != "window"
+                self.mode = "embedded" if embedded else "window"
+                prof = profile_dir(company)
+                prof.mkdir(parents=True, exist_ok=True)
+                kw = dict(headless=embedded, accept_downloads=True,
+                          viewport={"width": 1280, "height": 800} if embedded else None,
+                          args=["--disable-blink-features=AutomationControlled"], locale="th-TH")
                 if CFG.get("browser_channel"):
                     kw["channel"] = CFG["browser_channel"]
-                ctx = pw.chromium.launch_persistent_context(
-                    str(HERE / CFG.get("browser_profile", "browser_profile")), **kw)
+                ua_key = kw.get("channel", "")
+                if embedded and ua_key in UA_CACHE:
+                    kw["user_agent"] = UA_CACHE[ua_key]
+                ctx = pw.chromium.launch_persistent_context(str(prof), **kw)
+                if embedded and "user_agent" not in kw:
+                    # เบราว์เซอร์เบื้องหลังบอกเว็บว่าเป็น "Headless" — บางเว็บไม่ยอมให้ใช้ จึงใช้ค่าปกติแทน
+                    try:
+                        ua = (ctx.pages[0] if ctx.pages else ctx.new_page()).evaluate("navigator.userAgent")
+                    except Exception:
+                        ua = ""
+                    if "Headless" in ua:
+                        UA_CACHE[ua_key] = ua.replace("HeadlessChrome", "Chrome")
+                        ctx.close()
+                        kw["user_agent"] = UA_CACHE[ua_key]
+                        ctx = pw.chromium.launch_persistent_context(str(prof), **kw)
                 closed = {"v": False}
                 ctx.on("close", lambda *_: closed.update(v=True))
+                view = viewer.View(ctx, lambda m: setattr(self, "message", m)) if embedded else None
+                self.view = view
+
+                def auto_fill(page):
+                    if not CFG.get("auto_fill", True):
+                        return
+                    portal = portal_for_url(page.url)
+                    user, pw_ = login_for(self.company, portal)
+                    if not (user or pw_):
+                        return
+                    f, info = (view or viewer.View(ctx, lambda m: None)).find_login(page)
+                    if f and info.get("pwEmpty"):
+                        ok, msg = (view or viewer.View(ctx, lambda m: None)).fill_login(user, pw_, page)
+                        if ok:
+                            self.message = f"กรอกชื่อผู้ใช้/รหัสผ่าน {PORTAL_INFO[portal]['short']} ที่จำไว้ให้แล้ว — กรอกรหัสภาพ/OTP (ถ้ามี) แล้วกดเข้าสู่ระบบ"
+
+                def on_page(p):
+                    p.on("download", on_download)
+                    if view:
+                        view.attach_page(p, activate=True)
+                    else:
+                        p.on("load", lambda *_: auto_fill(p))
+
                 for p in ctx.pages:
                     p.on("download", on_download)
-                ctx.on("page", lambda p: p.on("download", on_download))
+                    if view:
+                        view.attach_page(p, activate=True)
+                    else:
+                        p.on("load", lambda *_, p=p: auto_fill(p))
+                if view:
+                    view.on_page_loaded = auto_fill
+                ctx.on("page", on_page)
                 ctx.on("response", on_response)
+                where = "ในหน้าโปรแกรม (ส่วน 'เว็บไซต์')" if embedded else "ในหน้าต่างเบราว์เซอร์"
+
                 def goto(key, first=False):
                     page = ctx.pages[0] if (first and ctx.pages) else ctx.new_page()
                     try:
-                        page.bring_to_front()
+                        if view:
+                            view.select(page)
+                        else:
+                            page.bring_to_front()
                         page.goto(portal_url(key), timeout=60000)
-                        self.message = f"เปิด {PORTAL_INFO[key]['name']} แล้ว — ล็อกอินในหน้าต่างเบราว์เซอร์"
+                        self.message = f"เปิด {PORTAL_INFO[key]['name']} แล้ว — ล็อกอิน{where}"
                     except Exception as e:
-                        self.message = f"เปิด {PORTAL_INFO[key]['name']} ไม่สำเร็จ: {e}"
+                        self.message = f"เปิด {PORTAL_INFO[key]['name']} ไม่สำเร็จ: {str(e).splitlines()[0][:100]}"
 
                 for i, key in enumerate(portals):
                     goto(key, first=(i == 0))
@@ -340,9 +449,11 @@ class Session:
                                 box["error"] = e
                             finally:
                                 box["done"].set()
+                        if view:
+                            view.process_inputs()
                         if not ctx.pages:
                             break
-                        ctx.pages[0].wait_for_timeout(500)
+                        ctx.pages[0].wait_for_timeout(40 if view else 500)
                     except Exception:
                         if closed["v"] or not ctx.pages:
                             break
@@ -360,6 +471,9 @@ class Session:
         finally:
             self.state = "idle"
             self._ctx = None
+            if self.view and self.view.dialog:
+                self.view.answer_dialog(False)
+            self.view = None
             while not self.cmds.empty():          # ปล่อยคำขอที่ค้าง
                 _, box = self.cmds.get_nowait()
                 box["error"] = RuntimeError("เบราว์เซอร์ปิดแล้ว")
@@ -409,7 +523,11 @@ def index():
 @app.get("/api/state")
 def api_state():
     return jsonify({
-        "config": {k: CFG.get(k) for k in ("output_root", "companies", "year_format", "confirm_each_file", "browser_channel")},
+        "config": dict({k: CFG.get(k) for k in ("output_root", "year_format", "confirm_each_file",
+                                                  "browser_channel", "browser_mode", "auto_fill")},
+                       companies=[public_company(c) for c in CFG["companies"]]),
+        "creds_available": creds.available(),
+        "session_company": SESSION.company if SESSION.state != "idle" else None,
         "session": {"state": SESSION.state, "message": SESSION.message},
         "default_folder": DEFAULT_FOLDER,
         "version": VERSION,
@@ -423,7 +541,7 @@ def api_state():
 @app.post("/api/config")
 def api_config():
     d = request.get_json(force=True)
-    for k in ("output_root", "year_format", "confirm_each_file", "browser_channel"):
+    for k in ("output_root", "year_format", "confirm_each_file", "browser_channel", "browser_mode", "auto_fill"):
         if k in d:
             CFG[k] = d[k]
     if "portal_urls" in d:
@@ -441,7 +559,12 @@ def api_config():
             tid = "".join(ch for ch in str(c.get("tax_id", "")) if ch.isdigit())
             if len(tid) != 13:
                 return jsonify(error=f"เลขผู้เสียภาษีต้องมี 13 หลัก: {c.get('tax_id')}"), 400
-            comps.append({"name": c.get("name") or tid, "tax_id": tid})
+            old = next((x for x in CFG["companies"] if x["tax_id"] == tid), {})
+            comps.append({"name": c.get("name") or tid, "tax_id": tid, "logins": old.get("logins", {})})
+        removed = {x["tax_id"] for x in CFG["companies"]} - {x["tax_id"] for x in comps}
+        for tid in removed:                       # ลบบริษัท → ลบรหัสผ่านที่จำไว้ด้วย
+            for k in PORTAL_INFO:
+                creds.delete_password(tid, k)
         CFG["companies"] = comps
     save_cfg(CFG)
     return jsonify(ok=True)
@@ -695,6 +818,130 @@ def api_scan_download():
                             msg=f"ดาวน์โหลดเสร็จ {ok}/{len(todo)} รายการ — ตรวจและบันทึกในคิวเอกสารด้านล่าง")
     SESSION.call(job, wait=False)
     return jsonify(scan_public())
+
+
+# ---------------------------------------------------------------- เว็บไซต์ในหน้าโปรแกรม
+def active_view():
+    v = SESSION.view
+    return v if (v and SESSION.state == "running") else None
+
+
+@app.get("/api/view/state")
+def api_view_state():
+    v = active_view()
+    out = {"mode": SESSION.mode if SESSION.state != "idle" else CFG.get("browser_mode", "embedded"),
+           "running": SESSION.state == "running", "state": SESSION.state, "company": SESSION.company}
+    if v:
+        out.update(v.snapshot())
+        portal = portal_for_url(v.url)
+        user, pw_ = login_for(SESSION.company, portal)
+        out["portal"] = portal
+        out["portal_name"] = PORTAL_INFO[portal]["short"] if portal else ""
+        out["has_login"] = bool(user or pw_)
+    return jsonify(out)
+
+
+@app.get("/api/view/frame")
+def api_view_frame():
+    v = active_view()
+    if not v:
+        return ("", 204)
+    try:
+        after = int(request.args.get("after", 0))
+    except ValueError:
+        after = 0
+    fr = v.latest_frame(after, timeout=8.0)
+    if not fr or fr[0] <= after:
+        return ("", 204, {"X-Seq": str(after)})
+    seq, data, w, h = fr
+    return (data, 200, {"Content-Type": "image/jpeg", "Cache-Control": "no-store", "X-Seq": str(seq),
+                        "X-W": str(w or v.size["width"]), "X-H": str(h or v.size["height"])})
+
+
+@app.post("/api/view/input")
+def api_view_input():
+    v = active_view()
+    if not v:
+        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
+    for ev in (request.get_json(force=True) or {}).get("events", [])[:300]:
+        if isinstance(ev, dict):
+            v.queue_input(ev)
+    return jsonify(ok=True)
+
+
+@app.post("/api/view/dialog")
+def api_view_dialog():
+    v = active_view()
+    d = request.get_json(force=True) or {}
+    ok = v.answer_dialog(d.get("accept"), d.get("text")) if v else False
+    return jsonify(ok=ok)
+
+
+@app.post("/api/view/autofill")
+def api_view_autofill():
+    v = active_view()
+    if not v:
+        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
+    portal = portal_for_url(v.url)
+    if not portal:
+        return jsonify(error="หน้านี้ไม่ใช่เว็บ RD / SSO / DBD"), 400
+    user, pw_ = login_for(SESSION.company, portal)
+    if not (user or pw_):
+        return jsonify(error=f"ยังไม่ได้บันทึกชื่อผู้ใช้/รหัสผ่าน {PORTAL_INFO[portal]['short']} ของบริษัทนี้ — "
+                             "พิมพ์ในหน้าเว็บแล้วกด 'จำชื่อผู้ใช้/รหัสผ่าน' หรือตั้งค่าที่ส่วนบริษัท"), 400
+    ok, msg = SESSION.call(lambda ctx: v.fill_login(user, pw_), timeout=30)
+    return (jsonify(ok=True, msg=msg) if ok else (jsonify(error=msg), 400))
+
+
+@app.post("/api/view/remember")
+def api_view_remember():
+    """จำชื่อผู้ใช้/รหัสผ่านที่ผู้ใช้พิมพ์ไว้ในหน้าล็อกอินที่แสดงอยู่"""
+    v = active_view()
+    if not v:
+        return jsonify(error="ยังไม่ได้เปิดเว็บ"), 400
+    portal = portal_for_url(v.url)
+    c = company_by_id(SESSION.company)
+    if not portal or not c:
+        return jsonify(error="หน้านี้ไม่ใช่เว็บ RD / SSO / DBD"), 400
+    user, pw_ = SESSION.call(lambda ctx: v.read_login(), timeout=30)
+    if user is None:
+        return jsonify(error="ไม่พบช่องชื่อผู้ใช้/รหัสผ่านในหน้านี้"), 400
+    if not user and not pw_:
+        return jsonify(error="ยังไม่ได้พิมพ์ชื่อผู้ใช้/รหัสผ่านในหน้าเว็บ"), 400
+    return save_login(c, portal, user, pw_)
+
+
+def save_login(c, portal, username, password=None, clear=False):
+    logins = c.setdefault("logins", {})
+    if username is not None:
+        if username:
+            logins[portal] = {"username": username}
+        else:
+            logins.pop(portal, None)
+    msg = "บันทึกชื่อผู้ใช้แล้ว"
+    if clear:
+        creds.delete_password(c["tax_id"], portal)
+        msg = "ลบรหัสผ่านที่จำไว้แล้ว"
+    elif password:
+        try:
+            creds.set_password(c["tax_id"], portal, password)
+            msg = "บันทึกชื่อผู้ใช้และรหัสผ่านแล้ว (รหัสผ่านเก็บใน Windows Credential Manager)"
+        except Exception as e:
+            save_cfg(CFG)
+            return jsonify(error=f"บันทึกชื่อผู้ใช้แล้ว แต่เก็บรหัสผ่านไม่ได้: {e}"), 400
+    save_cfg(CFG)
+    return jsonify(ok=True, msg=msg, company=public_company(c))
+
+
+@app.post("/api/company/login")
+def api_company_login():
+    d = request.get_json(force=True) or {}
+    c = company_by_id(d.get("tax_id"))
+    portal = d.get("portal")
+    if not c or c["tax_id"] != d.get("tax_id") or portal not in PORTAL_INFO:
+        return jsonify(error="ไม่พบบริษัทหรือเว็บ"), 400
+    return save_login(c, portal, (d.get("username") or "").strip(), d.get("password") or None,
+                      bool(d.get("clear_password")))
 
 
 @app.post("/api/session/stop")
