@@ -4,6 +4,21 @@ setlocal
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
 
+rem ---- make sure the program files are here (ZIP must be extracted first) ----
+if not exist "%~dp0webapp.py" (
+  echo.
+  echo [X] Program files not found next to this .bat file:
+  echo     %~dp0
+  echo.
+  echo     This usually means the ZIP was opened but NOT extracted.
+  echo     1. Close this window
+  echo     2. Right-click the ZIP file - choose "Extract All..." - Extract
+  echo     3. Open the extracted folder and double-click run_web.bat there
+  echo.
+  pause
+  exit /b 1
+)
+
 rem ---- find Python (py launcher first, then python) ----
 set "PY="
 py -3 -c "import sys" >nul 2>&1 && set "PY=py -3"
@@ -27,7 +42,7 @@ rem ---- install missing libraries automatically ----
 %PY% -c "import flask, playwright, pypdf, yaml" >nul 2>&1
 if errorlevel 1 (
   echo Installing required libraries, please wait...
-  %PY% -m pip install --disable-pip-version-check -r requirements.txt
+  %PY% -m pip install --disable-pip-version-check flask pypdf pyyaml playwright
   if errorlevel 1 (
     echo.
     echo [X] Library install failed. Check the internet connection and try again.
