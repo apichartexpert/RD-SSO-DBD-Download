@@ -382,9 +382,23 @@ MODAL_JS = r"""
   const dlgs = [...document.querySelectorAll(sel)].filter(vis);
   const DL = /(ดาวน์โหลด|download|พิมพ์|print|ดูไฟล์|เปิดไฟล์|pdf)/i;
   let dlg = null;
-  for (const d of dlgs.reverse()) { if ([...d.querySelectorAll('button, a, [role=button]')].some(b => vis(b) && DL.test(norm(b.innerText || b.title)))) { dlg = d; break; } }
-  if (!dlg) return null;
-  const btns = [...dlg.querySelectorAll('button, a, [role=button]')].filter(vis).filter(b => DL.test(norm(b.innerText || b.title || b.getAttribute('aria-label'))));
+  const fresh = b => !b.hasAttribute('data-taxdocs-pre');       // ปุ่มที่เพิ่งปรากฏหลังกดเมนู
+  for (const d of dlgs.reverse()) { if ([...d.querySelectorAll('button, a, [role=button]')].some(b => vis(b) && fresh(b) && DL.test(norm(b.innerText || b.title)))) { dlg = d; break; } }
+  if (!dlg) {
+    // เว็บใช้กล่องของตัวเอง: หาปุ่มดาวน์โหลดใหม่ แล้วใช้กล่องที่ลอยอยู่ (fixed/absolute) ที่ครอบปุ่มนั้น
+    const nb = [...document.querySelectorAll('button, a, [role=button], input[type=button]')].filter(b => vis(b) && fresh(b) && DL.test(norm(b.innerText || b.value || b.title)));
+    if (!nb.length) return null;
+    let a = nb[0].parentElement, best = null;
+    while (a && a !== document.body) {
+      const st = getComputedStyle(a);
+      if (st.position === 'fixed' || (st.position === 'absolute' && parseInt(st.zIndex || '0', 10) > 10)) best = a;
+      a = a.parentElement;
+    }
+    dlg = best || nb[0].closest('table, form, section, div') || document.body;
+  }
+  const btns = [...dlg.querySelectorAll('button, a, [role=button], input[type=button]')].filter(b => vis(b) && fresh(b))
+               .filter(b => DL.test(norm(b.innerText || b.value || b.title || b.getAttribute('aria-label'))));
+  if (!btns.length) return null;
   const items = btns.map((b, i) => {
     let row = b.closest('tr, [role=row], li, .row, .list-group-item');
     if (!row || btns.filter(x => row.contains(x)).length > 1) {      // หาแถวที่มีปุ่มนี้ปุ่มเดียว
@@ -395,13 +409,18 @@ MODAL_JS = r"""
     const t = norm(row ? row.innerText : '').replace(norm(b.innerText), '').trim();
     return {id: mark + i, text: t.slice(0, 120), btn: norm(b.innerText).slice(0, 40)};
   });
-  const all = [...dlg.querySelectorAll('button, a, [role=button]')].filter(vis);
+  const all = [...dlg.querySelectorAll('button, a, [role=button], input[type=button]')].filter(vis);
   const close = all.find(b => /^(ปิด|close|×|✕|x)$/i.test(norm(b.innerText)) || /close|ปิด/i.test(b.getAttribute('aria-label') || '')) ||
                 [...document.querySelectorAll('[aria-label*=close i], .btn-close, .close')].filter(vis)[0];
   if (close) close.setAttribute('data-taxdocs-close', mark);
   const title = norm((dlg.querySelector('h1, h2, h3, h4, h5, .modal-title, [mat-dialog-title], .swal2-title') || {}).innerText);
   return {items, title, hasClose: !!close};
 }
+"""
+
+
+PREMARK_JS = r"""
+() => { document.querySelectorAll('button, a, [role=button], input[type=button]').forEach(b => b.setAttribute('data-taxdocs-pre', '1')); return true; }
 """
 
 
@@ -756,6 +775,7 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             debug([f"รายการ: {item['label']} | แถว: {item['row'][:120]}",
                    f"หน้าใหม่ที่เปิด: {[p.url[:100] for p in new_pages] or '-'}",
                    f"สั่งพิมพ์ (window.print): {'ใช่' if printed else 'ไม่'}",
+                   f"กล่องเลือกรายการ: {' / '.join(modal_log) if modal_log else 'ไม่พบ'}",
                    "การตอบกลับจากเว็บหลังกด:"] + [f"   {x}" for x in seen_resp[-40:]] + [f"ผล: {note}", ""])
         return ok, note
 
@@ -774,6 +794,11 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
                 tog.first.click(timeout=6000)
             page.wait_for_timeout(500)
             clicked = False
+            for f in page.frames:
+                try:
+                    f.evaluate(PREMARK_JS)
+                except Exception:
+                    pass
             for f in [frame] + [x for x in page.frames if x is not frame]:
                 try:
                     if f.evaluate(CLICK_MENU_ITEM_JS, item["menu"]["text"]):
@@ -788,6 +813,11 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             loc = frame.locator(f'[data-taxdocs-id="{item["id"]}"]')
             if loc.count() == 0:
                 return finish(False, "หาไม่พบในหน้าเว็บ (หน้าเปลี่ยนไปแล้ว) — กดค้นหาใหม่")
+            for f in page.frames:
+                try:
+                    f.evaluate(PREMARK_JS)
+                except Exception:
+                    pass
             loc.first.scroll_into_view_if_needed(timeout=5000)
             loc.first.click(timeout=10000)
     except Exception as e:
@@ -813,11 +843,33 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
                         got = True
         return got
 
+    taken_pages = set()
+
+    def grab_newpages():
+        """แท็บใหม่ที่เปิดไฟล์ตรง ๆ (รูป/PDF) → ดึงไฟล์ด้วย session เดียวกัน"""
+        for np_ in [p for p in ctx.pages if p not in before_pages and p not in taken_pages]:
+            u = np_.url
+            if not u.startswith(("http", "blob:", "data:")):
+                continue
+            try:
+                if u.startswith("http"):
+                    data = ctx.request.get(u, timeout=30000).body()
+                else:
+                    data = _decode(np_.evaluate(FETCH_B64_JS, u) or "")
+            except Exception:
+                continue
+            ext = _ext(data)
+            if ext:
+                taken_pages.add(np_)
+                keep(data, base_name + ext, u if u.startswith("http") else page.url, hint, meta)
+                return True
+        return False
+
     def wait_file(seconds):
         end = time.time() + seconds
         n0 = counter["n"]
         while time.time() < end:
-            if counter["n"] > n0 or grab_blobs():
+            if counter["n"] > n0 or grab_blobs() or grab_newpages():
                 return True
             try:
                 page.wait_for_timeout(400)
@@ -826,6 +878,7 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
         return False
 
     modal_note = ""
+    modal_log = []
 
     def handle_modal():
         """กล่อง 'เลือกรายการ' ที่มีปุ่มดาวน์โหลดหลายปุ่ม → กดปุ่มของรายการที่ต้องการ แล้วปิดกล่อง"""
@@ -839,6 +892,7 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             if not m or not m.get("items"):
                 continue
             choices = [x for x in m["items"] if not is_bad(x["text"] + " " + x["btn"])]
+            modal_log.append(f"พบกล่อง '{m.get('title') or '-'}': " + " | ".join(f"{x['text']} [{x['btn']}]" for x in m["items"]))
             sub = item.get("sub")
             targets = [x for x in choices if _sub_match(sub, x["text"])] if sub else choices
             if sub and not targets:
@@ -847,10 +901,11 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             for x in targets:
                 try:
                     f.locator(f'[data-taxdocs-mdl="{x["id"]}"]').first.click(timeout=6000)
-                    if wait_file(20):
-                        got = True
-                except Exception:
-                    pass
+                    res = wait_file(20)
+                    modal_log.append(f"กด '{x['btn']}' ของ '{x['text']}' → {'ได้ไฟล์' if res else 'ไม่ได้ไฟล์'}")
+                    got = got or res
+                except Exception as e:
+                    modal_log.append(f"กด '{x['text']}' ไม่ได้: {str(e).splitlines()[0][:80]}")
             try:
                 if m.get("hasClose"):
                     f.locator(f'[data-taxdocs-close="{mark}"]').first.click(timeout=4000)
@@ -868,7 +923,7 @@ def fetch(ctx, frame, item, keep, counter, log, debug=None):
             ok = True
             break
         new_pages = [p for p in ctx.pages if p not in before_pages]
-        if grab_blobs():
+        if grab_blobs() or grab_newpages():
             ok = True
             break
         if printed:
