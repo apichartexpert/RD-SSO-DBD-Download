@@ -196,6 +196,7 @@ td.path2{word-break:break-all;color:var(--muted)}
         <option value="embedded">แสดงในหน้าโปรแกรม (แนะนำ)</option><option value="window">เปิดเป็นหน้าต่างแยก</option>
       </select>
       <label class="switch"><input type="checkbox" id="autofill" onchange="saveOpt()"> กรอกชื่อผู้ใช้/รหัสผ่านที่จำไว้ให้อัตโนมัติ</label>
+      <label class="switch"><input type="checkbox" id="autoremember" onchange="saveOpt()"> จำชื่อผู้ใช้/รหัสผ่านที่พิมพ์ เมื่อเข้าสู่ระบบสำเร็จ</label>
       <label class="switch"><input type="checkbox" id="confirm" onchange="saveOpt()"> ตรวจทีละไฟล์ก่อนบันทึก</label>
       <div class="hint">ปิดตัวเลือกนี้เพื่อบันทึกอัตโนมัติทันทีที่ได้รับไฟล์</div>
     </div>
@@ -338,7 +339,7 @@ async function loadState(first){
   $("yearFmt").value=c.year_format||"BE";
   $("channel").value=c.browser_channel||"";
   $("confirm").checked=!!c.confirm_each_file;
-  $("bmode").value=c.browser_mode||"embedded"; $("autofill").checked=c.auto_fill!==false;
+  $("bmode").value=c.browser_mode||"embedded"; $("autofill").checked=c.auto_fill!==false; $("autoremember").checked=c.auto_remember!==false;
   if(!editing||!document.activeElement||!document.activeElement.closest("#compList")) renderCompanies(c);
   document.querySelectorAll(".compSel").forEach(s=>{const v=s.value;s.innerHTML=c.companies.map(x=>`<option value="${x.tax_id}">${esc(x.name)}</option>`).join("");if(v)s.value=v});
   if(first) renderPortals();
@@ -354,7 +355,7 @@ async function loadState(first){
 
 async function saveCfg(patch){await api("/api/config",patch);await loadState()}
 function saveOpt(){saveCfg({year_format:$("yearFmt").value,browser_channel:$("channel").value,confirm_each_file:$("confirm").checked,
-  browser_mode:$("bmode").value,auto_fill:$("autofill").checked})}
+  browser_mode:$("bmode").value,auto_fill:$("autofill").checked,auto_remember:$("autoremember").checked})}
 async function addCompany(){
   const name=$("cName").value.trim(), tax=$("cTax").value.replace(/\D/g,"");
   if(tax.length!==13) return toast("เลขผู้เสียภาษีต้องมี 13 หลัก");
