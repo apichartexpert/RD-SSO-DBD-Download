@@ -66,6 +66,19 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .pcard .edit input{font-size:12px;padding:5px 7px}
 .linkbtn{background:none;border:none;padding:0;color:var(--accent);font-size:12px;cursor:pointer;text-decoration:underline}
 input.pathIn{font-size:13px}
+.finder{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.finder h3{font-size:15px;margin:0 0 4px}
+.steps{font-size:13px;color:var(--muted);margin:0 0 10px;padding-left:18px}
+.steps li{margin:2px 0}
+.frow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.frow select{width:auto}
+.ftable{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+.ftable th,.ftable td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.ftable td.rowtxt{color:var(--muted);max-width:420px}
+.ftable tr.dim td{opacity:.45}
+.ftable input{accent-color:var(--accent);width:16px;height:16px}
+.st-done{color:var(--accent)} .st-failed{color:var(--bad)} .st-downloading,.st-waiting{color:var(--warn)}
+.fbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
 .chip{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:14px;cursor:pointer}
 .chip input{accent-color:var(--accent)}
 .msg{font-size:13px;color:var(--muted);margin-top:10px;min-height:20px}
@@ -179,6 +192,23 @@ td.path2{word-break:break-all;color:var(--muted)}
         </div>
         <div class="hint" style="margin-top:8px">เว็บจะเปิดใน Microsoft Edge ที่โปรแกรมควบคุม — ใส่ชื่อผู้ใช้/รหัสผ่านในหน้านั้นด้วยตัวเอง (โปรแกรมไม่เห็นและไม่เก็บรหัสผ่าน)
           จากนั้นกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวด้านล่างทันที</div>
+
+        <div class="finder" id="finder">
+          <h3>ค้นหาแบบและใบเสร็จอัตโนมัติ</h3>
+          <ol class="steps">
+            <li>ล็อกอินในหน้าต่าง Edge แล้วเข้า <b>หน้าประวัติการยื่นแบบ / พิมพ์ใบเสร็จ</b></li>
+            <li>เลือกปี แล้วกด <b>ค้นหาในหน้าเว็บ</b> — โปรแกรมจะอ่านรายการแบบและใบเสร็จในหน้านั้นมาให้เลือก</li>
+            <li>ติ๊กรายการที่ต้องการ แล้วกด <b>ดาวน์โหลดที่เลือก</b></li>
+          </ol>
+          <div class="frow">
+            <label>ปีภาษี</label>
+            <select id="fYear"></select>
+            <label class="switch" style="margin:0"><input type="checkbox" id="fSetYear" checked> ตั้งปีบนเว็บให้ด้วย (ถ้าหน้านั้นมีช่องเลือกปี)</label>
+            <button class="primary" id="btnScan" onclick="scan()">ค้นหาในหน้าเว็บ</button>
+          </div>
+          <div class="msg" id="fMsg"></div>
+          <div id="fResult"></div>
+        </div>
       </div>
 
       <div id="t-sort" hidden>
@@ -261,6 +291,7 @@ async function loadState(first){
   $("stateText").textContent={idle:"พร้อม",starting:"กำลังเปิดเบราว์เซอร์",running:"เบราว์เซอร์เปิดอยู่",sorting:"กำลังอ่านไฟล์"}[st]||st;
   $("btnStart").disabled=st==="starting"||st==="sorting"; $("btnStop").disabled=st!=="running";
   document.querySelectorAll(".pgo").forEach(b=>b.disabled=st==="starting"||st==="sorting");
+  $("btnScan").disabled=st!=="running"; $("btnScan").title=st!=="running"?"เปิดเว็บและล็อกอินก่อน":"";
   $("msg").textContent=S.session.message||"";
 }
 
@@ -306,6 +337,58 @@ async function setOutTyped(){
   if(!v||v===S.config.output_root) return;
   try{const r=await api("/api/fs/check",{path:v});await saveCfg({output_root:r.path});toast("ตั้งโฟลเดอร์ปลายทางแล้ว")}
   catch(e){$("outPath").value=S.config.output_root}
+}
+/* ---------- finder ---------- */
+let F={state:"idle",items:[],msg:""}, fShowAll=false, fSel=new Set();
+(function initYears(){const y=new Date().getFullYear()+543;$("fYear").innerHTML=[0,1,2,3,4,5].map(i=>`<option value="${y-i}">${y-i} (${y-i-543})</option>`).join("")})();
+async function scan(){
+  $("btnScan").disabled=true;$("fMsg").textContent="กำลังค้นหา…";
+  try{F=await api("/api/scan",{year:$("fYear").value,set_year:$("fSetYear").checked});
+      fSel=new Set(F.items.filter(i=>i.match&&i.status!=="done").map(i=>i.id));renderF()}
+  catch(e){$("fMsg").textContent=e.error||"ค้นหาไม่สำเร็จ"}
+  finally{$("btnScan").disabled=false}
+}
+const FST={new:"",waiting:"รอ",downloading:"กำลังดาวน์โหลด…",done:"✓ ได้แล้ว",failed:"✗ ไม่สำเร็จ"};
+function renderF(){
+  $("fMsg").textContent=F.msg||"";
+  const list=F.items.filter(i=>fShowAll||i.match);
+  if(!F.items.length){$("fResult").innerHTML="";return}
+  const busy=F.state==="downloading";
+  $("fResult").innerHTML=`
+   <div class="fbar">
+     <button class="sm" onclick="fPick('all')">เลือกทั้งหมด</button>
+     <button class="sm" onclick="fPick('form')">เฉพาะแบบ</button>
+     <button class="sm" onclick="fPick('receipt')">เฉพาะใบเสร็จ</button>
+     <button class="sm" onclick="fPick('none')">ไม่เลือก</button>
+     <label class="switch" style="margin:0 0 0 6px"><input type="checkbox" ${fShowAll?"checked":""} onchange="fShowAll=this.checked;renderF()"> แสดงปีอื่นด้วย (${F.items.length-F.items.filter(i=>i.match).length})</label>
+     <span style="flex:1"></span>
+     <button class="primary" ${busy?"disabled":""} onclick="fDownload()">ดาวน์โหลดที่เลือก (${[...fSel].filter(id=>list.some(i=>i.id===id)).length})</button>
+   </div>
+   <div style="overflow:auto"><table class="ftable"><thead><tr><th></th><th>แบบ</th><th>ประเภท</th><th>งวด</th><th>ปุ่มบนเว็บ / ข้อความในแถว</th><th>สถานะ</th></tr></thead><tbody>
+   ${list.length?list.map(i=>`<tr class="${i.match?"":"dim"}">
+      <td><input type="checkbox" ${fSel.has(i.id)?"checked":""} ${busy?"disabled":""} onchange="this.checked?fSel.add('${i.id}'):fSel.delete('${i.id}');renderF()"></td>
+      <td>${esc(i.form)}</td><td>${esc(i.kind)}</td><td>${esc(i.period||"-")}</td>
+      <td class="rowtxt"><b style="color:var(--ink)">${esc(i.label||"(ปุ่ม)")}</b><br>${esc(i.row)}</td>
+      <td class="st-${i.status}">${FST[i.status]||""}${i.note&&i.status==="failed"?`<br><small>${esc(i.note)}</small>`:""}</td></tr>`).join("")
+     :`<tr><td colspan="6" class="empty">ไม่มีรายการของปี ${F.year} — ติ๊ก "แสดงปีอื่นด้วย" หรือเลือกปีบนเว็บแล้วค้นหาใหม่</td></tr>`}
+   </tbody></table></div>`;
+}
+function fPick(m){
+  const list=F.items.filter(i=>fShowAll||i.match);
+  if(m==="none")fSel.clear();
+  else list.forEach(i=>{const r=i.kind==="ใบเสร็จ";if(m==="all"||(m==="receipt"&&r)||(m==="form"&&!r))fSel.add(i.id);else if(m!=="all")fSel.delete(i.id)});
+  renderF();
+}
+async function fDownload(){
+  const list=F.items.filter(i=>fShowAll||i.match), ids=[...fSel].filter(id=>list.some(i=>i.id===id));
+  if(!ids.length)return toast("ยังไม่ได้เลือกรายการ");
+  F=await api("/api/scan/download",{ids});renderF();
+}
+async function pollF(){
+  if(F.state!=="downloading")return;
+  const was=F.state; F=await api("/api/scan");
+  if(was==="downloading"&&F.state==="idle"){fSel.clear();toast("ดาวน์โหลดเสร็จ — ตรวจในคิวเอกสาร")}
+  renderF();
 }
 async function startDl(){
   const portals=[...document.querySelectorAll("#portals input:checked")].map(i=>i.value);
@@ -383,7 +466,7 @@ async function loadHist(){
 }
 
 loadState(true).then(refresh);
-setInterval(()=>{loadState();refresh()},1500);
+setInterval(()=>{loadState();refresh();pollF()},1500);
 </script>
 </body>
 </html>

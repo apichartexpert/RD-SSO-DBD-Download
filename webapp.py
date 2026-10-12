@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import queue
 import uuid
 import webbrowser
 from pathlib import Path
@@ -21,6 +22,7 @@ import yaml
 from flask import Flask, abort, jsonify, request, send_file
 
 import taxdocs as td
+import scanner
 
 HOST, PORT = "127.0.0.1", 8765
 HERE = td.HERE
@@ -133,11 +135,12 @@ def public(item):
     }
 
 
-def add_item(path, orig, source, company_hint, owned):
+def add_item(path, orig, source, company_hint, owned, hint="", meta=None):
     path = Path(path)
     data = path.read_bytes()
     is_pdf = data[:5] == b"%PDF-"
-    info = td.classify(td.pdf_text(path) if is_pdf else "", orig, source)
+    text = td.pdf_text(path) if is_pdf else ""
+    info = td.classify(text + "\n" + (hint or ""), orig, source)
     comp = None
     for c in CFG["companies"]:
         if c["tax_id"] in info["digits"]:
@@ -145,6 +148,17 @@ def add_item(path, orig, source, company_hint, owned):
             break
     comp = comp or company_by_id(company_hint)
     info.pop("digits", None)
+    if meta:   # ข้อมูลจากรายการที่ผู้ใช้เลือกบนเว็บ (ปุ่มที่กดบอกประเภทได้แม่นกว่า)
+        info["kind"] = meta.get("kind") or info["kind"]
+        if info["form"] == "อื่นๆ" and meta.get("form") not in (None, "", "อื่นๆ"):
+            f = next((f for f in td.FORMS if f["code"] == meta["form"]), None)
+            if f:
+                info.update(form=f["code"], agency=f["agency"], annual=f["annual"])
+        if (not info["year"] or info["guessed"]) and meta.get("period"):
+            r = td.parse_period(meta["period"])
+            if r:
+                info["year"], info["month"] = r
+                info["guessed"] = False
     item = {"id": uuid.uuid4().hex[:10], "path": str(path), "orig": orig, "source": source,
             "info": info, "company": comp["tax_id"] if comp else "", "owned": owned,
             "is_pdf": is_pdf, "status": "pending", "hash": td.sha256(data), "ts": time.time()}
@@ -187,6 +201,20 @@ class Session:
         self.message = ""
         self.open_q = []          # เว็บที่ขอให้เปิดเพิ่มระหว่างเบราว์เซอร์ทำงาน
         self.company = None
+        self.cmds = queue.Queue() # คำสั่งที่ต้องรันใน thread ของเบราว์เซอร์
+        self.scan = {"state": "idle", "items": [], "msg": "", "year": None}
+
+    def call(self, fn, wait=True, timeout=120):
+        """ส่งงานไปรันใน thread ของเบราว์เซอร์ (Playwright ใช้ได้เฉพาะใน thread ที่สร้าง)"""
+        box = {"done": threading.Event(), "result": None, "error": None}
+        self.cmds.put((fn, box))
+        if not wait:
+            return None
+        if not box["done"].wait(timeout):
+            raise TimeoutError("เบราว์เซอร์ไม่ตอบสนอง")
+        if box["error"]:
+            raise box["error"]
+        return box["result"]
 
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
@@ -214,15 +242,21 @@ class Session:
             return
         STAGING.mkdir(exist_ok=True)
         seen = set()
+        counter = {"n": 0, "hint": "", "meta": None}   # นับไฟล์ที่ได้รับ (ใช้ตอนดาวน์โหลดจากรายการค้นหา)
+        self._counter = counter
 
-        def keep(data, name, url):
+        def keep(data, name, url, hint=None, meta=None):
+            counter["n"] += 1
             h = td.sha256(data)
             if h in seen:
                 return
             seen.add(h)
             p = STAGING / f"{uuid.uuid4().hex[:8]}_{td.safe(name)}"
             p.write_bytes(data)
-            add_item(p, name, url, company, owned=True)
+            add_item(p, name, url, self.company or company, owned=True,
+                     hint=counter["hint"] if hint is None else hint,
+                     meta=meta if meta is not None else counter.get("meta"))
+        self._keep = keep
 
         def on_download(d):
             try:
@@ -276,10 +310,19 @@ class Session:
                 for i, key in enumerate(portals):
                     goto(key, first=(i == 0))
                 self.state = "running"
+                self._ctx = ctx
                 while not self.stop.is_set() and not closed["v"]:
                     try:
                         while self.open_q:
                             goto(self.open_q.pop(0))
+                        while not self.cmds.empty():
+                            fn, box = self.cmds.get_nowait()
+                            try:
+                                box["result"] = fn(ctx)
+                            except Exception as e:
+                                box["error"] = e
+                            finally:
+                                box["done"].set()
                         if not ctx.pages:
                             break
                         ctx.pages[0].wait_for_timeout(500)
@@ -299,6 +342,13 @@ class Session:
             self.message = f"เปิดเบราว์เซอร์ไม่ได้: {str(e).splitlines()[0]}{hint}"
         finally:
             self.state = "idle"
+            self._ctx = None
+            while not self.cmds.empty():          # ปล่อยคำขอที่ค้าง
+                _, box = self.cmds.get_nowait()
+                box["error"] = RuntimeError("เบราว์เซอร์ปิดแล้ว")
+                box["done"].set()
+            if self.scan["state"] != "idle":
+                self.scan.update(state="idle", msg="เบราว์เซอร์ปิดแล้ว")
 
     def start_sort(self, folder, move, company):
         self.thread = threading.Thread(target=self._run_sort, args=(folder, move, company), daemon=True)
@@ -530,6 +580,93 @@ def api_portal_open():
         return jsonify(error="กำลังจัดไฟล์อยู่ รอสักครู่"), 409
     SESSION.open_portal(key, d.get("company"))
     return jsonify(ok=True)
+
+
+SCAN_REFS = {}
+
+
+def scan_public():
+    sc = SESSION.scan
+    keep_keys = ("id", "label", "row", "form", "agency", "kind", "period", "match", "status", "note", "page_title")
+    return {"state": sc["state"], "msg": sc["msg"], "year": sc["year"],
+            "items": [{k: it.get(k) for k in keep_keys} for it in sc["items"]]}
+
+
+@app.get("/api/scan")
+def api_scan_get():
+    return jsonify(scan_public())
+
+
+@app.post("/api/scan")
+def api_scan():
+    if SESSION.state != "running":
+        return jsonify(error="เปิดเว็บและล็อกอินก่อน แล้วไปที่หน้าประวัติการยื่นแบบ"), 400
+    if SESSION.scan["state"] == "downloading":
+        return jsonify(error="กำลังดาวน์โหลดอยู่ รอสักครู่"), 409
+    d = request.get_json(force=True) or {}
+    try:
+        year = int(d.get("year"))
+    except Exception:
+        return jsonify(error="กรุณาเลือกปี"), 400
+    year = td.be(year)
+    SESSION.scan.update(state="scanning", msg=f"กำลังค้นหาเอกสารปี {year}…", year=year)
+    msgs = []
+    try:
+        items = SESSION.call(lambda ctx: scanner.scan_pages(ctx, year, bool(d.get("set_year")),
+                                                            SCAN_REFS, msgs.append), timeout=90)
+    except Exception as e:
+        SESSION.scan.update(state="idle", msg=f"ค้นหาไม่สำเร็จ: {e}")
+        return jsonify(scan_public())
+    old = {(i.get("row"), i.get("label")): i for i in SESSION.scan["items"] if i.get("status") == "done"}
+    for it in items:
+        prev = old.get((it.get("row"), it.get("label")))
+        it["status"] = "done" if prev else "new"
+        it["note"] = prev.get("note", "") if prev else ""
+    n_match = sum(1 for i in items if i["match"])
+    msg = f"พบ {len(items)} รายการในหน้าเว็บ · ตรงกับปี {year}: {n_match} รายการ"
+    if not items:
+        msg = ("ไม่พบปุ่มพิมพ์/ดาวน์โหลดในหน้าเว็บที่เปิดอยู่ — ไปที่หน้าประวัติการยื่นแบบ/ใบเสร็จ "
+               "แล้วเลือกปีบนเว็บและกดค้นหาของเว็บก่อน จากนั้นกดค้นหาที่นี่อีกครั้ง")
+    SESSION.scan.update(state="idle", items=items, msg=" · ".join(msgs + [msg]))
+    return jsonify(scan_public())
+
+
+@app.post("/api/scan/download")
+def api_scan_download():
+    if SESSION.state != "running":
+        return jsonify(error="เบราว์เซอร์ปิดอยู่"), 400
+    if SESSION.scan["state"] != "idle":
+        return jsonify(error="กำลังทำงานอยู่"), 409
+    ids = set((request.get_json(force=True) or {}).get("ids") or [])
+    todo = [it for it in SESSION.scan["items"] if it["id"] in ids]
+    if not todo:
+        return jsonify(error="ยังไม่ได้เลือกรายการ"), 400
+    for it in todo:
+        it["status"], it["note"] = "waiting", ""
+    SESSION.scan.update(state="downloading", msg=f"กำลังดาวน์โหลด 0/{len(todo)}")
+
+    def job(ctx):
+        ok = 0
+        for i, it in enumerate(todo, 1):
+            if SESSION.stop.is_set():
+                break
+            it["status"] = "downloading"
+            SESSION.scan["msg"] = f"กำลังดาวน์โหลด {i}/{len(todo)}: {it['label'][:40]}"
+            frame = SCAN_REFS.get(it["id"])
+            if frame is None:
+                it["status"], it["note"] = "failed", "กดค้นหาใหม่"
+                continue
+            try:
+                good, note = scanner.fetch(ctx, frame, it, SESSION._keep, SESSION._counter,
+                                           lambda m: SESSION.scan.update(msg=m))
+            except Exception as e:
+                good, note = False, str(e).splitlines()[0][:100]
+            it["status"], it["note"] = ("done" if good else "failed"), note
+            ok += good
+        SESSION.scan.update(state="idle",
+                            msg=f"ดาวน์โหลดเสร็จ {ok}/{len(todo)} รายการ — ตรวจและบันทึกในคิวเอกสารด้านล่าง")
+    SESSION.call(job, wait=False)
+    return jsonify(scan_public())
 
 
 @app.post("/api/session/stop")
