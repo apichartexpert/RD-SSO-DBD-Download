@@ -47,7 +47,7 @@ HERE = Path(__file__).resolve().parent
 
 PORTALS = {
     "rd": ("กรมสรรพากร (RD e-Filing)", "https://efiling.rd.go.th"),
-    "sso": ("สำนักงานประกันสังคม (e-Service นายจ้าง)", "https://www.sso.go.th"),
+    "sso": ("สำนักงานประกันสังคม (e-Service นายจ้าง)", "https://www.sso.go.th/eservices/esv/login.do"),
     "dbd": ("กรมพัฒนาธุรกิจการค้า (DBD e-Filing)", "https://efiling.dbd.go.th"),
 }
 

@@ -19,8 +19,8 @@ year_format: BE
 # true = ให้ยืนยันทีละไฟล์ (แนะนำช่วงแรก)  false = บันทึกอัตโนมัติทั้งหมด
 confirm_each_file: true
 
-# เบราว์เซอร์ที่ใช้: chrome / msedge / เว้นว่าง = Chromium ของ Playwright
-browser_channel: chrome
+# เบราว์เซอร์ที่ใช้: msedge (แนะนำ มีในทุกเครื่อง Windows) / chrome / เว้นว่าง = Chromium ของ Playwright
+browser_channel: msedge
 
 # โฟลเดอร์เก็บ session การล็อกอิน (ไม่เก็บรหัสผ่าน) — อย่าแชร์โฟลเดอร์นี้ให้ผู้อื่น
 browser_profile: browser_profile

@@ -43,17 +43,45 @@ DEFAULT_CFG = {
     "companies": [],
     "year_format": "BE",
     "confirm_each_file": True,
-    "browser_channel": "chrome",
+    "browser_channel": "msedge",
     "browser_profile": "browser_profile",
+    "portal_urls": {},
+    "config_version": 2,
 }
+
+# หน้าเข้าสู่ระบบของแต่ละหน่วยงาน (แก้ได้ในหน้าเว็บ ถ้าเว็บราชการเปลี่ยนที่อยู่)
+PORTAL_INFO = {
+    "rd": {"name": "กรมสรรพากร", "short": "RD",
+           "desc": "ภ.ง.ด.1, 3, 53, 54, 50, 51 · ภ.พ.30, 36 · ใบเสร็จรับเงิน",
+           "login": "ล็อกอินด้วยบัญชี RD e-Filing / Digital ID",
+           "url": "https://efiling.rd.go.th"},
+    "sso": {"name": "สำนักงานประกันสังคม", "short": "SSO",
+            "desc": "สปส.1-10 · กท.20ก · ใบเสร็จรับเงินสมทบ",
+            "login": "ล็อกอินด้วยชื่อผู้ใช้ e-Service นายจ้าง",
+            "url": "https://www.sso.go.th/eservices/esv/login.do"},
+    "dbd": {"name": "กรมพัฒนาธุรกิจการค้า", "short": "DBD",
+            "desc": "งบการเงิน · ส.บช.3 · บอจ.5 (รายชื่อผู้ถือหุ้น)",
+            "login": "ล็อกอินด้วยชื่อผู้ใช้ DBD e-Filing",
+            "url": "https://efiling.dbd.go.th"},
+}
+
+
+def portal_url(key):
+    return (CFG.get("portal_urls") or {}).get(key) or PORTAL_INFO[key]["url"]
 
 
 def load_cfg():
     cfg = dict(DEFAULT_CFG)
     if CONFIG_PATH.exists():
-        cfg.update(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {})
+        raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        cfg.update(raw)
+        cfg["config_version"] = raw.get("config_version", 1)
         if not cfg.get("output_root") or str(cfg["output_root"]).startswith("D:/เอกสารบริษัท"):
             cfg["output_root"] = DEFAULT_FOLDER
+        if int(cfg.get("config_version") or 1) < 2:      # ค่าตั้งรุ่นเก่า → ใช้ Edge เป็นค่าเริ่มต้น
+            cfg["browser_channel"] = "msedge"
+            cfg["config_version"] = 2
+    cfg["portal_urls"] = cfg.get("portal_urls") or {}
     comps = []
     for c in cfg.get("companies") or []:
         tid = "".join(ch for ch in str(c.get("tax_id", "")) if ch.isdigit())
@@ -157,12 +185,23 @@ class Session:
         self.stop = threading.Event()
         self.state = "idle"       # idle / starting / running / sorting
         self.message = ""
+        self.open_q = []          # เว็บที่ขอให้เปิดเพิ่มระหว่างเบราว์เซอร์ทำงาน
+        self.company = None
 
     def busy(self):
         return self.thread is not None and self.thread.is_alive()
 
+    def open_portal(self, key, company):
+        """เปิดเว็บของหน่วยงานในเบราว์เซอร์ที่โปรแกรมควบคุม (ไฟล์ที่ดาวน์โหลดจึงถูกดักจับได้)"""
+        if self.state in ("running", "starting") and self.busy():
+            self.open_q.append(key)
+        else:
+            self.start_browser([key], company)
+
     def start_browser(self, portals, company):
         self.stop.clear()
+        self.open_q = []
+        self.company = company
         self.thread = threading.Thread(target=self._run_browser, args=(portals, company), daemon=True)
         self.thread.start()
 
@@ -225,16 +264,22 @@ class Session:
                     p.on("download", on_download)
                 ctx.on("page", lambda p: p.on("download", on_download))
                 ctx.on("response", on_response)
-                for i, key in enumerate(portals):
-                    page = ctx.pages[0] if (i == 0 and ctx.pages) else ctx.new_page()
+                def goto(key, first=False):
+                    page = ctx.pages[0] if (first and ctx.pages) else ctx.new_page()
                     try:
-                        page.goto(td.PORTALS[key][1], timeout=60000)
+                        page.bring_to_front()
+                        page.goto(portal_url(key), timeout=60000)
+                        self.message = f"เปิด {PORTAL_INFO[key]['name']} แล้ว — ล็อกอินในหน้าต่างเบราว์เซอร์"
                     except Exception as e:
-                        self.message = f"เปิด {td.PORTALS[key][0]} ไม่สำเร็จ: {e}"
+                        self.message = f"เปิด {PORTAL_INFO[key]['name']} ไม่สำเร็จ: {e}"
+
+                for i, key in enumerate(portals):
+                    goto(key, first=(i == 0))
                 self.state = "running"
-                self.message = "ล็อกอินในหน้าต่างเบราว์เซอร์ แล้วกดดาวน์โหลด/เปิด PDF ตามปกติ"
                 while not self.stop.is_set() and not closed["v"]:
                     try:
+                        while self.open_q:
+                            goto(self.open_q.pop(0))
                         if not ctx.pages:
                             break
                         ctx.pages[0].wait_for_timeout(500)
@@ -248,7 +293,10 @@ class Session:
                     pass
             self.message = "ปิดเบราว์เซอร์แล้ว"
         except Exception as e:
-            self.message = f"เปิดเบราว์เซอร์ไม่ได้: {e}"
+            hint = ""
+            if "msedge" in str(e) or "chrome" in str(e).lower():
+                hint = " — ลองเปลี่ยนเบราว์เซอร์ในหัวข้อตัวเลือก"
+            self.message = f"เปิดเบราว์เซอร์ไม่ได้: {str(e).splitlines()[0]}{hint}"
         finally:
             self.state = "idle"
 
@@ -297,6 +345,7 @@ def api_state():
         "config": {k: CFG.get(k) for k in ("output_root", "companies", "year_format", "confirm_each_file", "browser_channel")},
         "session": {"state": SESSION.state, "message": SESSION.message},
         "default_folder": DEFAULT_FOLDER,
+        "portal_info": {k: dict(v, url=portal_url(k), default_url=v["url"]) for k, v in PORTAL_INFO.items()},
         "forms": [{"code": f["code"], "label": f["label"], "agency": f["agency"]} for f in td.FORMS],
         "kinds": td.KINDS, "agencies": td.AGENCIES,
         "portals": {k: v[0] for k, v in td.PORTALS.items()},
@@ -309,6 +358,15 @@ def api_config():
     for k in ("output_root", "year_format", "confirm_each_file", "browser_channel"):
         if k in d:
             CFG[k] = d[k]
+    if "portal_urls" in d:
+        urls = {}
+        for k, v in (d["portal_urls"] or {}).items():
+            v = str(v or "").strip()
+            if k in PORTAL_INFO and v and v != PORTAL_INFO[k]["url"]:
+                if not v.startswith(("http://", "https://")):
+                    return jsonify(error="ลิงก์ต้องขึ้นต้นด้วย https://"), 400
+                urls[k] = v
+        CFG["portal_urls"] = urls
     if "companies" in d:
         comps = []
         for c in d["companies"]:
@@ -359,40 +417,118 @@ def api_fs_mkdir():
     return jsonify(path=str(p))
 
 
+PS_PICKER = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true; $owner.ShowInTaskbar = $false
+$owner.StartPosition = 'CenterScreen'; $owner.Size = New-Object System.Drawing.Size(1,1)
+$owner.Opacity = 0
+$owner.Show(); $owner.Activate()
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = $env:TD_TITLE
+$d.ShowNewFolderButton = $true
+if (Test-Path -LiteralPath $env:TD_INIT) { $d.SelectedPath = $env:TD_INIT }
+$r = $d.ShowDialog($owner)
+$owner.Close()
+if ($r -eq [System.Windows.Forms.DialogResult]::OK) {
+  $b = [System.Text.Encoding]::UTF8.GetBytes($d.SelectedPath)
+  $o = [Console]::OpenStandardOutput(); $o.Write($b, 0, $b.Length); $o.Flush()
+}
+"""
+
+TK_PICKER = ("import tkinter as tk, tkinter.filedialog as fd, sys, os\n"
+             "r=tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+             "r.lift(); r.focus_force(); r.update()\n"
+             "p=fd.askdirectory(parent=r, initialdir=os.environ['TD_INIT'], title=os.environ['TD_TITLE'], mustexist=False)\n"
+             "sys.stdout.buffer.write((p or '').encode('utf-8'))\n")
+
+PICKING = threading.Lock()
+
+
+def native_pick(init, title):
+    """เปิดหน้าต่างเลือกโฟลเดอร์ของระบบ: คืน path, "" ถ้ากดยกเลิก, None ถ้าเปิดไม่ได้"""
+    env = dict(os.environ, TD_INIT=init, TD_TITLE=title)
+    attempts = []
+    if sys.platform.startswith("win"):
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        attempts.append(dict(args=["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+                                   "-Command", PS_PICKER], creationflags=flags))
+    attempts.append(dict(args=[sys.executable, "-c", TK_PICKER]))
+    errors = []
+    for a in attempts:
+        try:
+            out = subprocess.run(a["args"], capture_output=True, timeout=900, env=env,
+                                 creationflags=a.get("creationflags", 0))
+            if out.returncode == 0:
+                return out.stdout.decode("utf-8", "replace").strip().strip("\ufeff")
+            errors.append(out.stderr.decode("utf-8", "replace").strip()[-200:])
+        except Exception as e:
+            errors.append(str(e))
+    app.logger.warning("folder picker failed: %s", " | ".join(errors))
+    return None
+
+
 @app.post("/api/fs/native")
 def api_fs_native():
-    """เปิดหน้าต่างเลือกโฟลเดอร์ของระบบปฏิบัติการ"""
+    """เปิดหน้าต่างเลือกโฟลเดอร์ของ Windows"""
     d = request.get_json(force=True) or {}
     init = d.get("initial") or DEFAULT_FOLDER
     if not os.path.isdir(init):
         init = DEFAULT_FOLDER if os.path.isdir(DEFAULT_FOLDER) else str(Path.home())
-    title = d.get("title") or "เลือกโฟลเดอร์"
-    code = ("import tkinter as tk, tkinter.filedialog as fd, sys\n"
-            "r=tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
-            "r.lift(); r.focus_force(); r.update()\n"
-            "p=fd.askdirectory(parent=r, initialdir=sys.argv[1], title=sys.argv[2], mustexist=False)\n"
-            "sys.stdout.buffer.write((p or '').encode('utf-8'))\n")
+    if not PICKING.acquire(blocking=False):
+        return jsonify(error="หน้าต่างเลือกโฟลเดอร์เปิดอยู่แล้ว — ดูที่แถบงานด้านล่างจอ"), 409
     try:
-        out = subprocess.run([sys.executable, "-c", code, init, title], capture_output=True, timeout=600)
-        if out.returncode != 0:
-            raise RuntimeError(out.stderr.decode("utf-8", "replace")[-300:])
-        p = out.stdout.decode("utf-8").strip()
-        if p:
-            Path(p).mkdir(parents=True, exist_ok=True)
-        return jsonify(path=str(Path(p)) if p else "")
+        p = native_pick(init, d.get("title") or "เลือกโฟลเดอร์")
+    finally:
+        PICKING.release()
+    if p is None:
+        return jsonify(error="เปิดหน้าต่างเลือกโฟลเดอร์ของ Windows ไม่ได้ — ใช้ตัวเลือกในหน้าเว็บแทน"), 500
+    if p:
+        Path(p).mkdir(parents=True, exist_ok=True)
+    return jsonify(path=str(Path(p)) if p else "")
+
+
+@app.post("/api/fs/check")
+def api_fs_check():
+    """ตรวจ path ที่ผู้ใช้พิมพ์เอง"""
+    p = str((request.get_json(force=True) or {}).get("path") or "").strip().strip('"')
+    if not p or not Path(p).is_absolute():
+        return jsonify(error="กรุณาพิมพ์ path เต็ม เช่น I:\\เอกสารภาษี"), 400
+    try:
+        Path(p).mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        return jsonify(error=f"เปิดหน้าต่างเลือกโฟลเดอร์ไม่ได้: {e}"), 500
+        return jsonify(error=f"ใช้โฟลเดอร์นี้ไม่ได้: {e}"), 400
+    return jsonify(path=str(Path(p)))
 
 
 @app.post("/api/session/start")
 def api_session_start():
+    if not CFG["companies"]:
+        return jsonify(error="กรุณาเพิ่มบริษัทก่อน"), 400
+    d = request.get_json(force=True) or {}
+    portals = [p for p in d.get("portals", []) if p in PORTAL_INFO] or list(PORTAL_INFO)
+    if SESSION.state == "running" and SESSION.busy():     # เบราว์เซอร์เปิดอยู่แล้ว → เปิดแท็บเพิ่ม
+        SESSION.open_q.extend(portals)
+        return jsonify(ok=True)
     if SESSION.busy():
         return jsonify(error="กำลังทำงานอยู่"), 409
+    SESSION.start_browser(portals, d.get("company"))
+    return jsonify(ok=True)
+
+
+@app.post("/api/portal/open")
+def api_portal_open():
     if not CFG["companies"]:
         return jsonify(error="กรุณาเพิ่มบริษัทก่อน"), 400
     d = request.get_json(force=True)
-    portals = [p for p in d.get("portals", []) if p in td.PORTALS] or list(td.PORTALS)
-    SESSION.start_browser(portals, d.get("company"))
+    key = d.get("portal")
+    if key not in PORTAL_INFO:
+        return jsonify(error="ไม่รู้จักเว็บนี้"), 400
+    if SESSION.state == "sorting":
+        return jsonify(error="กำลังจัดไฟล์อยู่ รอสักครู่"), 409
+    SESSION.open_portal(key, d.get("company"))
     return jsonify(ok=True)
 
 

@@ -48,7 +48,24 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line)}
 .tab{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 12px;color:var(--muted)}
 .tab.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500}
-.portals{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 12px}
+.portals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:6px 0 14px}
+@media (max-width:1100px){.portals{grid-template-columns:minmax(0,1fr)}}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;background:var(--panel)}
+.pcard.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.pcard .ph{display:flex;align-items:center;gap:8px}
+.pcard .ph input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+.pcard .tag{font-size:12px;font-weight:600;padding:1px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+.pcard .pn{font-weight:600}
+.pcard .pd{font-size:13px;color:var(--muted)}
+.pcard .pl{font-size:12px;color:var(--muted);word-break:break-all}
+.pcard .pl a{color:var(--accent)}
+.pcard .go{margin-top:auto}
+.pcard .go button{width:100%}
+.pcard .edit{display:none;gap:6px}
+.pcard.editing .edit{display:flex}
+.pcard .edit input{font-size:12px;padding:5px 7px}
+.linkbtn{background:none;border:none;padding:0;color:var(--accent);font-size:12px;cursor:pointer;text-decoration:underline}
+input.pathIn{font-size:13px}
 .chip{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:14px;cursor:pointer}
 .chip input{accent-color:var(--accent)}
 .msg{font-size:13px;color:var(--muted);margin-top:10px;min-height:20px}
@@ -108,11 +125,14 @@ td.path2{word-break:break-all;color:var(--muted)}
   <aside>
     <div class="card">
       <h2>โฟลเดอร์ปลายทาง</h2>
-      <div class="row"><div class="path" id="outPath">—</div></div>
+      <input type="text" class="pathIn" id="outPath" spellcheck="false" title="พิมพ์ path แล้วกด Enter ก็ได้"
+             onfocus="editing=true" onblur="editing=false;setOutTyped()" onkeydown="if(event.key==='Enter')this.blur()">
       <div class="row" style="margin-top:8px">
-        <button class="pickBtn" onclick="pickFolder('out')">เลือกโฟลเดอร์…</button>
+        <button class="pickBtn primary" onclick="pickFolder('out')">เลือกโฟลเดอร์…</button>
         <button onclick="api('/api/open-output',{})">เปิดโฟลเดอร์</button>
       </div>
+      <div class="hint">กด "เลือกโฟลเดอร์…" เพื่อเปิดหน้าต่างของ Windows หรือพิมพ์ path แล้วกด Enter ·
+        <button class="linkbtn" onclick="pickFor='out';$('modal').classList.add('on');fsList(S.config.output_root)">เลือกจากในหน้าเว็บ</button></div>
     </div>
 
     <div class="card">
@@ -133,7 +153,7 @@ td.path2{word-break:break-all;color:var(--muted)}
       </select>
       <label class="f">เบราว์เซอร์</label>
       <select id="channel" onchange="saveOpt()">
-        <option value="chrome">Google Chrome</option><option value="msedge">Microsoft Edge</option><option value="">Chromium (ติดมากับโปรแกรม)</option>
+        <option value="msedge">Microsoft Edge (แนะนำ)</option><option value="chrome">Google Chrome</option><option value="">Chromium (ติดมากับโปรแกรม)</option>
       </select>
       <label class="switch"><input type="checkbox" id="confirm" onchange="saveOpt()"> ตรวจทีละไฟล์ก่อนบันทึก</label>
       <div class="hint">ปิดตัวเลือกนี้เพื่อบันทึกอัตโนมัติทันทีที่ได้รับไฟล์</div>
@@ -151,13 +171,14 @@ td.path2{word-break:break-all;color:var(--muted)}
       <div id="t-dl">
         <label class="f">บริษัทที่จะดาวน์โหลด</label>
         <select class="compSel" id="dlComp"></select>
-        <label class="f">เว็บที่ต้องการเปิด</label>
+        <label class="f">ดาวน์โหลดจาก</label>
         <div class="portals" id="portals"></div>
         <div class="row">
-          <button class="primary" id="btnStart" onclick="startDl()">เปิดเบราว์เซอร์และเริ่ม</button>
-          <button class="danger" id="btnStop" onclick="api('/api/session/stop',{})">หยุด</button>
+          <button class="primary" id="btnStart" onclick="startDl()">เปิดทุกเว็บที่เลือก</button>
+          <button class="danger" id="btnStop" onclick="api('/api/session/stop',{})">ปิดเบราว์เซอร์</button>
         </div>
-        <div class="hint" style="margin-top:8px">ล็อกอินในหน้าต่างที่เปิดขึ้นด้วยตัวเอง แล้วกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวด้านล่างทันที</div>
+        <div class="hint" style="margin-top:8px">เว็บจะเปิดใน Microsoft Edge ที่โปรแกรมควบคุม — ใส่ชื่อผู้ใช้/รหัสผ่านในหน้านั้นด้วยตัวเอง (โปรแกรมไม่เห็นและไม่เก็บรหัสผ่าน)
+          จากนั้นกดดาวน์โหลดหรือเปิด PDF ตามปกติ ไฟล์จะเข้าคิวด้านล่างทันที</div>
       </div>
 
       <div id="t-sort" hidden>
@@ -228,17 +249,18 @@ function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");clear
 async function loadState(first){
   S=await api("/api/state");
   const c=S.config;
-  $("outPath").textContent=c.output_root;
   $("yearFmt").value=c.year_format||"BE";
   $("channel").value=c.browser_channel||"";
   $("confirm").checked=!!c.confirm_each_file;
   $("compList").innerHTML=c.companies.length?c.companies.map((x,i)=>`<div class="comp"><div>${esc(x.name)}<small>${x.tax_id}</small></div><button class="sm danger" onclick="delCompany(${i})">ลบ</button></div>`).join(""):`<div class="hint">ยังไม่มีบริษัท — เพิ่มอย่างน้อย 1 บริษัท</div>`;
   document.querySelectorAll(".compSel").forEach(s=>{const v=s.value;s.innerHTML=c.companies.map(x=>`<option value="${x.tax_id}">${esc(x.name)}</option>`).join("");if(v)s.value=v});
-  if(first){$("portals").innerHTML=Object.entries(S.portals).map(([k,v])=>`<label class="chip"><input type="checkbox" value="${k}" checked> ${esc(v)}</label>`).join("")}
+  if(first) renderPortals();
+  if(document.activeElement!==$("outPath")) $("outPath").value=c.output_root;
   const st=S.session.state, on=st!=="idle";
   $("dot").classList.toggle("on",on);
   $("stateText").textContent={idle:"พร้อม",starting:"กำลังเปิดเบราว์เซอร์",running:"เบราว์เซอร์เปิดอยู่",sorting:"กำลังอ่านไฟล์"}[st]||st;
-  $("btnStart").disabled=on; $("btnStop").disabled=st!=="running";
+  $("btnStart").disabled=st==="starting"||st==="sorting"; $("btnStop").disabled=st!=="running";
+  document.querySelectorAll(".pgo").forEach(b=>b.disabled=st==="starting"||st==="sorting");
   $("msg").textContent=S.session.message||"";
 }
 
@@ -258,6 +280,33 @@ async function delCompany(i){
 
 function tab(t){document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("on",b.dataset.t===t));["dl","sort","hist"].forEach(x=>$("t-"+x).hidden=x!==t);if(t==="hist")loadHist()}
 
+function renderPortals(){
+  $("portals").innerHTML=["rd","sso","dbd"].filter(k=>S.portal_info[k]).map(k=>[k,S.portal_info[k]]).map(([k,p])=>`
+    <div class="pcard on" id="pc-${k}">
+      <label class="ph"><input type="checkbox" value="${k}" checked onchange="$('pc-${k}').classList.toggle('on',this.checked)">
+        <span class="tag">${p.short}</span><span class="pn">${esc(p.name)}</span></label>
+      <div class="pd">${esc(p.desc)}</div>
+      <div class="pl">${esc(p.login)}<br><a href="${esc(p.url)}" target="_blank" rel="noopener" onclick="event.preventDefault();openPortal('${k}')">${esc(p.url)}</a>
+        · <button class="linkbtn" onclick="$('pc-${k}').classList.toggle('editing')">แก้ลิงก์</button></div>
+      <div class="edit"><input type="text" id="url-${k}" value="${esc(p.url)}" spellcheck="false"><button class="sm" onclick="saveUrl('${k}')">บันทึก</button></div>
+      <div class="go"><button class="pgo" onclick="openPortal('${k}')">เปิดเว็บไซต์เพื่อเข้าสู่ระบบ →</button></div>
+    </div>`).join("");
+}
+async function openPortal(k){
+  if(!S.config.companies.length) return toast("กรุณาเพิ่มบริษัทก่อน");
+  await api("/api/portal/open",{portal:k,company:$("dlComp").value});
+  toast(`กำลังเปิด ${S.portal_info[k].name} ในเบราว์เซอร์`);loadState();
+}
+async function saveUrl(k){
+  const urls={};Object.keys(S.portal_info).forEach(x=>urls[x]=x===k?$("url-"+k).value.trim():S.portal_info[x].url);
+  await saveCfg({portal_urls:urls});renderPortals();toast("บันทึกลิงก์แล้ว");
+}
+async function setOutTyped(){
+  const v=$("outPath").value.trim();
+  if(!v||v===S.config.output_root) return;
+  try{const r=await api("/api/fs/check",{path:v});await saveCfg({output_root:r.path});toast("ตั้งโฟลเดอร์ปลายทางแล้ว")}
+  catch(e){$("outPath").value=S.config.output_root}
+}
 async function startDl(){
   const portals=[...document.querySelectorAll("#portals input:checked")].map(i=>i.value);
   if(!portals.length) return toast("เลือกอย่างน้อย 1 เว็บ");
@@ -273,12 +322,13 @@ let picking=false;
 async function pickFolder(which){
   if(picking) return; picking=true; pickFor=which;
   const btns=document.querySelectorAll(".pickBtn"); btns.forEach(b=>{b.disabled=true;b.dataset.l=b.textContent;b.textContent="กำลังเปิดหน้าต่าง…"});
+  toast("หน้าต่างเลือกโฟลเดอร์ของ Windows กำลังเปิด — ถ้าไม่เห็น ดูที่แถบงานด้านล่างจอ");
   const initial=which==="out"?S.config.output_root:(srcFolder||S.default_folder);
   try{
     const r=await api("/api/fs/native",{initial,title:which==="out"?"เลือกโฟลเดอร์ปลายทาง":"เลือกโฟลเดอร์ต้นทาง"});
     if(r.path){fs.path=r.path;await choose()}
   }catch(e){ /* หน้าต่าง Windows เปิดไม่ได้ → ใช้ตัวเลือกในหน้าเว็บแทน */
-    $("modal").classList.add("on");await fsList(initial);
+    if(!String(e&&e.error).includes("เปิดอยู่แล้ว")){$("modal").classList.add("on");await fsList(initial);}
   }finally{picking=false;btns.forEach(b=>{b.disabled=false;b.textContent=b.dataset.l})}
 }
 function closeModal(){$("modal").classList.remove("on")}
@@ -290,7 +340,7 @@ async function fsList(p){
 }
 function fsUp(){if(fs.parent)fsList(fs.parent)}
 async function mkdir(){const n=$("newDir").value.trim();if(!n)return;const r=await api("/api/fs/mkdir",{path:fs.path,name:n});$("newDir").value="";fsList(r.path)}
-async function nativePick(){const r=await api("/api/fs/native",{initial:fs.path});if(r.path){fs.path=r.path;choose()}}
+async function nativePick(){try{const r=await api("/api/fs/native",{initial:fs.path});if(r.path){fs.path=r.path;choose()}}catch(e){}}
 async function choose(){
   closeModal();
   if(pickFor==="out"){await saveCfg({output_root:fs.path});toast("ตั้งโฟลเดอร์ปลายทางแล้ว")}
