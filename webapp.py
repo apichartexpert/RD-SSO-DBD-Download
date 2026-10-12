@@ -149,7 +149,8 @@ def add_item(path, orig, source, company_hint, owned, hint="", meta=None):
     comp = comp or company_by_id(company_hint)
     info.pop("digits", None)
     if meta:   # ข้อมูลจากรายการที่ผู้ใช้เลือกบนเว็บ (ปุ่มที่กดบอกประเภทได้แม่นกว่า)
-        info["kind"] = meta.get("kind") or info["kind"]
+        kind_pdf = td.detect_kind(td.normalize(text + " " + orig))   # ตัว PDF บอกเองว่าเป็นใบเสร็จ/ใบรับ
+        info["kind"] = kind_pdf if kind_pdf != "แบบยื่น" else (meta.get("kind") or info["kind"])
         if info["form"] == "อื่นๆ" and meta.get("form") not in (None, "", "อื่นๆ"):
             f = next((f for f in td.FORMS if f["code"] == meta["form"]), None)
             if f:
@@ -624,9 +625,19 @@ def api_scan():
         it["note"] = prev.get("note", "") if prev else ""
     n_match = sum(1 for i in items if i["match"])
     msg = f"พบ {len(items)} รายการในหน้าเว็บ · ตรงกับปี {year}: {n_match} รายการ"
+    info = getattr(scanner.scan_pages, "last_info", {}) or {}
+    where = " / ".join(x for x in info.get("pages", []) if x)[:120]
+    if where:
+        msg += f" (อ่านจากหน้า: {where})"
     if not items:
-        msg = ("ไม่พบปุ่มพิมพ์/ดาวน์โหลดในหน้าเว็บที่เปิดอยู่ — ไปที่หน้าประวัติการยื่นแบบ/ใบเสร็จ "
-               "แล้วเลือกปีบนเว็บและกดค้นหาของเว็บก่อน จากนั้นกดค้นหาที่นี่อีกครั้ง")
+        if info.get("login"):
+            msg = "ยังไม่ได้เข้าสู่ระบบ — ใส่ชื่อผู้ใช้/รหัสผ่านในหน้าต่าง Edge ก่อน แล้วไปที่หน้าประวัติการยื่นแบบ"
+        else:
+            msg = (f"ไม่พบรายการแบบ/ใบเสร็จในหน้าที่เปิดอยู่ ({where or 'ไม่มีหน้าเว็บ'}) — "
+                   "หน้านี้น่าจะยังไม่ใช่หน้าประวัติ: หลังล็อกอิน ให้เข้าเมนู 'ประวัติการยื่นแบบ' / "
+                   "'ตรวจสอบสถานะการยื่นแบบ' / 'พิมพ์ใบเสร็จ' ให้เห็นตารางรายการก่อน แล้วกดค้นหาอีกครั้ง")
+        if info.get("junk"):
+            msg += f" · ข้ามลิงก์ที่ไม่ใช่เอกสารภาษี (เช่น โปรแกรม/คู่มือ) {info['junk']} รายการ"
     SESSION.scan.update(state="idle", items=items, msg=" · ".join(msgs + [msg]))
     return jsonify(scan_public())
 

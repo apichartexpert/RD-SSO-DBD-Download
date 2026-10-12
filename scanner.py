@@ -16,41 +16,63 @@ import taxdocs as td
 # --- JavaScript ที่รันในหน้าเว็บ: คืนรายการปุ่ม/ลิงก์เอกสารพร้อมข้อความในแถว
 SCAN_JS = r"""
 (prefix) => {
-  const GOOD = /(pdf|พิมพ์|print|ดาวน์โหลด|download|ใบเสร็จ|receipt|ดูแบบ|ดูเอกสาร|เรียกดู|แสดงแบบ|view|ส\.?\s?บ\.?\s?ช|บ\.?\s?อ\.?\s?จ|e-?receipt|ภ\.?\s?ง\.?\s?ด|ภ\.?\s?พ\.?|สปส|ใบรับ|ใบนำฝาก|pay\s?-?in)/i;
-  const BAD  = /(ยื่นแบบ|ยื่นเพิ่มเติม|ยื่นภาษี|ส่งแบบ|ส่งข้อมูล|นำส่ง|ยืนยัน|ชำระ|จ่าย|ลบ|ยกเลิก|แก้ไข|บันทึก|อัปโหลด|อัพโหลด|แนบ|ออกจากระบบ|logout|log out|sign out|submit|confirm|delete|remove|pay\b|payment|upload|edit|save|cancel|สมัคร|เปลี่ยนรหัส|ลืมรหัส)/i;
+  // ปุ่ม/ลิงก์ที่เป็นการเปิดเอกสาร
+  const GOOD = /(pdf|พิมพ์|print|ดาวน์โหลด|download|ใบเสร็จ|receipt|ดูแบบ|ดูเอกสาร|เรียกดู|แสดงแบบ|view|visibility|description|e-?receipt|ใบรับ|ใบนำฝาก|pay\s?-?in|file|document)/i;
+  // ไม่แตะ: ปุ่มที่เปลี่ยนข้อมูลบนเว็บ
+  const BAD  = /(ยื่นแบบ|ยื่นเพิ่มเติม|ยื่นภาษี|ส่งแบบ|ส่งข้อมูล|นำส่ง|ยืนยัน|ชำระ|จ่าย|ลบ|ยกเลิก|แก้ไข|บันทึก|อัปโหลด|อัพโหลด|แนบ|ออกจากระบบ|logout|log out|sign out|submit|confirm|delete|remove|\bpay\b|payment|upload|edit|save|cancel|สมัคร|เปลี่ยนรหัส|ลืมรหัส)/i;
+  // ไม่ใช่เอกสารภาษี: โปรแกรม คู่มือ แอป ข่าว
+  const JUNK = /(\.exe|\.msi|\.zip|\.rar|\.dmg|\.apk|โปรแกรม|program|windows|32-?bit|64-?bit|rd ?prep|installer|คู่มือ|manual|แอป|app ?store|google ?play|ประกาศ|ข่าว|news|faq|คำถาม|แบบฟอร์ม(?!.*ยื่น)|ดาวน์โหลดแบบฟอร์ม)/i;
+  // แถวที่เป็นรายการยื่นแบบ/ใบเสร็จ (ต้องมีชื่อแบบ หรือคำบ่งชี้)
+  const RECORD = /(ภ\.?\s?ง\.?\s?ด|ภ\.?\s?พ\.?\s?\d|ภ\.?\s?ธ\.?\s?\d|อ\.?\s?ส\.?\s?4|P\.?\s?N\.?\s?D|P\.?\s?P\.?\s?\d{2}|สปส|กท\.?\s?20|ส\.?\s?บ\.?\s?ช|บ\.?\s?อ\.?\s?จ|งบการเงิน|ใบเสร็จ|เลขที่อ้างอิง|เลขที่ใบเสร็จ|reference|เงินสมทบ|งวด|เดือนภาษี|ปีภาษี|รอบบัญชี)/i;
+  const PERIOD = /(25\d\d|20\d\d)/;
+
+  const cand = document.querySelectorAll('a[href], a[onclick], button, input[type=button], input[type=submit], input[type=image], [onclick], [role=button], mat-icon, i[class*=print], i[class*=pdf], i[class*=download], span[class*=print], img[src*=print], img[src*=pdf]');
+  const seenEl = new Set();
   const out = [];
-  const els = document.querySelectorAll('a[href], a[onclick], button, input[type=button], input[type=submit], input[type=image], [onclick], [role=button]');
-  let n = 0;
-  for (const el of els) {
-    if (el.closest('[data-taxdocs-skip]')) continue;
+  let n = 0, skippedJunk = 0;
+  for (let el of cand) {
+    // ไอคอนเปล่า → ใช้ตัวที่กดได้ที่ครอบอยู่
+    const clickable = el.closest('a, button, [role=button], [onclick], input') || el;
+    el = clickable;
+    if (seenEl.has(el) || el.closest('[data-taxdocs-skip], nav, header, footer, [role=navigation], .navbar, .menu, .sidebar')) continue;
+    seenEl.add(el);
     const r = el.getBoundingClientRect();
     const st = getComputedStyle(el);
     if ((r.width === 0 && r.height === 0) || st.visibility === 'hidden' || st.display === 'none') continue;
     const img = el.querySelector('img');
-    const own = [el.innerText, el.value, el.title, el.getAttribute('aria-label'), el.alt,
-                 img && (img.alt || img.title || img.src)].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    const icon = el.querySelector('mat-icon, i, svg, span[class*=icon]');
+    const cls = (el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || '') + ' ' +
+                (icon ? (icon.getAttribute('class') || '') + ' ' + (icon.getAttribute('data-icon') || '') + ' ' + (icon.tagName === 'MAT-ICON' ? icon.innerText : '') : '');
+    const own = [el.innerText, el.value, el.title, el.getAttribute('aria-label'), el.getAttribute('mattooltip'),
+                 el.getAttribute('data-original-title'), el.getAttribute('ngbtooltip'), el.alt,
+                 img && (img.alt || img.title)].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     const href = el.getAttribute('href') || '';
     const onclick = el.getAttribute('onclick') || '';
-    const sig = own + ' ' + href + ' ' + onclick;
+    const sig = own + ' ' + href + ' ' + onclick + ' ' + cls + ' ' + (img ? img.src : '');
     if (BAD.test(own) || BAD.test(onclick)) continue;
     const isPdfLink = /\.pdf(\?|#|$)/i.test(href);
     if (!isPdfLink && !GOOD.test(sig)) continue;
-    // ข้อความของแถว (ตาราง / รายการ / การ์ด)
-    const row = el.closest('tr, li, [role=row], .row, .card, .item, .list-group-item') || el.parentElement;
-    let ctx = (row ? row.innerText : own) || own;
-    ctx = ctx.replace(/\s+/g, ' ').trim().slice(0, 400);
-    // หัวตาราง (ช่วยบอกชื่อคอลัมน์ เช่น เดือนภาษี / ประเภทแบบ)
+    // แถวของรายการ
+    const row = el.closest('tr, [role=row], mat-row, li, .list-group-item, .card, .item, .row') || el.parentElement;
+    let ctx = ((row ? row.innerText : own) || own).replace(/\s+/g, ' ').trim();
+    if (JUNK.test(sig) || JUNK.test(ctx.slice(0, 300))) { skippedJunk++; continue; }
+    // แถวต้องเป็นรายการยื่นแบบ/ใบเสร็จ และไม่ใช่กล่องใหญ่ที่รวมทั้งหน้า
+    if (!RECORD.test(ctx) && !(isPdfLink && PERIOD.test(ctx))) continue;
+    if (ctx.length > 600) continue;
     let head = '';
-    const table = el.closest('table');
-    if (table) { const th = table.querySelector('thead, tr'); if (th) head = th.innerText.replace(/\s+/g, ' ').trim().slice(0, 200); }
+    const table = el.closest('table, mat-table, [role=table], [role=grid]');
+    if (table) { const th = table.querySelector('thead, mat-header-row, [role=columnheader], tr'); if (th) head = (th.closest('tr, mat-header-row, [role=row]') || th).innerText.replace(/\s+/g, ' ').trim().slice(0, 200); }
     const id = prefix + (n++);
     el.setAttribute('data-taxdocs-id', id);
     let abs = '';
     try { abs = href && !/^javascript:/i.test(href) && href !== '#' ? new URL(href, location.href).href : ''; } catch (e) {}
-    out.push({id, label: own.slice(0, 80), href: abs, onclick: onclick.slice(0, 200), row: ctx, head,
+    let label = own.slice(0, 80);
+    if (!label) label = /print/i.test(cls) ? 'พิมพ์ (ไอคอน)' : /pdf/i.test(cls) ? 'PDF (ไอคอน)' : /download/i.test(cls) ? 'ดาวน์โหลด (ไอคอน)' : 'เปิดเอกสาร (ไอคอน)';
+    out.push({id, label, href: abs, onclick: onclick.slice(0, 200), row: ctx.slice(0, 400), head,
               isPdf: isPdfLink, tag: el.tagName.toLowerCase()});
   }
-  return {url: location.href, title: document.title, items: out};
+  return {url: location.href, title: document.title, items: out, junk: skippedJunk,
+          loginForm: !!document.querySelector('input[type=password]')};
 }
 """
 
@@ -84,6 +106,20 @@ SET_YEAR_JS = r"""
     if (btn) { btn.click(); clicked = (btn.innerText || btn.value || '').trim(); }
   }
   return {changed, clicked};
+}
+"""
+
+
+BLOB_SRC_JS = r"""
+() => [...document.querySelectorAll('iframe, embed, object')]
+  .map(e => e.src || e.data || '')
+  .filter(u => /^blob:/.test(u) || /\.pdf(\?|#|$)/i.test(u) || /^data:application\/pdf/.test(u))
+"""
+
+FETCH_B64_JS = r"""
+async (u) => {
+  const b = await (await fetch(u)).blob();
+  return await new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.readAsDataURL(b); });
 }
 """
 
@@ -149,12 +185,17 @@ def scan_pages(ctx, year_be, set_year, refs, log):
             except Exception:
                 pass
     stamp = str(int(time.time() * 1000) % 10_000_000)
+    info = {"pages": [], "junk": 0, "login": False}
     for pi, p in enumerate(pages):
         for fi, f in enumerate(p.frames):
             try:
                 data = f.evaluate(SCAN_JS, f"td{stamp}_{pi}_{fi}_")
             except Exception:
                 continue
+            info["junk"] += data.get("junk", 0)
+            info["login"] = info["login"] or data.get("loginForm", False)
+            if fi == 0:
+                info["pages"].append(data.get("title") or data.get("url"))
             for it in data.get("items", []):
                 it["page_url"] = data.get("url", "")
                 it["page_title"] = data.get("title", "")
@@ -169,6 +210,7 @@ def scan_pages(ctx, year_be, set_year, refs, log):
             continue
         seen.add(key)
         uniq.append(it)
+    scan_pages.last_info = info
     return uniq
 
 
@@ -218,7 +260,30 @@ def fetch(ctx, frame, item, keep, counter, log):
         except Exception:
             time.sleep(0.4)
     ok = counter["n"] > before
-    # 3) หน้าต่างใหม่ที่เป็นหน้าพิมพ์ (HTML) → แปลงเป็น PDF
+    # 3) PDF ที่เปิดเป็น blob: ในแท็บใหม่ หรือแสดงในกรอบ (iframe/embed) บนหน้าเดิม
+    if not ok:
+        targets = [(np_, np_.url) for np_ in new_pages if np_.url.startswith("blob:")]
+        try:
+            srcs = frame.page.evaluate(BLOB_SRC_JS)
+            targets += [(frame.page, u) for u in srcs]
+        except Exception:
+            pass
+        for pg, u in targets:
+            try:
+                b64 = pg.evaluate(FETCH_B64_JS, u)
+                data = base64.b64decode(b64) if b64 else b""
+                if data[:5] == b"%PDF-":
+                    keep(data, name, u if not u.startswith("blob:") else frame.page.url, hint, meta)
+                    ok = True
+                    break
+            except Exception:
+                pass
+        if ok:
+            try:
+                frame.page.keyboard.press("Escape")   # ปิดหน้าต่างแสดง PDF บนเว็บ (ถ้ามี)
+            except Exception:
+                pass
+    # 4) หน้าต่างใหม่ที่เป็นหน้าพิมพ์ (HTML) → แปลงเป็น PDF
     if not ok:
         for np_ in new_pages:
             try:
