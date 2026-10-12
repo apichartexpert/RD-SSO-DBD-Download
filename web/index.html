@@ -131,7 +131,7 @@ td.path2{word-break:break-all;color:var(--muted)}
     <h1>TaxDocs</h1>
     <div class="sub">ดาวน์โหลดและจัดเก็บแบบภาษี · ใบเสร็จ · งบการเงิน</div>
   </div>
-  <div class="status"><span class="dot" id="dot"></span><span id="stateText">พร้อม</span></div>
+  <div class="status"><span id="ver" style="margin-right:10px"></span><span class="dot" id="dot"></span><span id="stateText">พร้อม</span></div>
 </header>
 
 <main>
@@ -279,6 +279,7 @@ function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");clear
 async function loadState(first){
   S=await api("/api/state");
   const c=S.config;
+  $("ver").textContent=S.version?"เวอร์ชัน "+S.version:"";
   $("yearFmt").value=c.year_format||"BE";
   $("channel").value=c.browser_channel||"";
   $("confirm").checked=!!c.confirm_each_file;

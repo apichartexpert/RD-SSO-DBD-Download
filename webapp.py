@@ -29,6 +29,22 @@ HERE = td.HERE
 CONFIG_PATH = HERE / "config.yaml"
 STAGING = HERE / "_staging"
 TOKEN = secrets.token_hex(16)
+SERVER_FILE = HERE / "_server.json"
+
+
+def code_version():
+    """เลขเวอร์ชันจากเนื้อหาไฟล์โปรแกรม (เปลี่ยนทุกครั้งที่อัปเดต)"""
+    import hashlib
+    h = hashlib.sha1()
+    for n in ("webapp.py", "scanner.py", "taxdocs.py", "web/index.html"):
+        try:
+            h.update((HERE / n).read_bytes())
+        except Exception:
+            pass
+    return h.hexdigest()[:7]
+
+
+VERSION = code_version()
 
 app = Flask(__name__)
 LOCK = threading.RLock()
@@ -396,6 +412,7 @@ def api_state():
         "config": {k: CFG.get(k) for k in ("output_root", "companies", "year_format", "confirm_each_file", "browser_channel")},
         "session": {"state": SESSION.state, "message": SESSION.message},
         "default_folder": DEFAULT_FOLDER,
+        "version": VERSION,
         "portal_info": {k: dict(v, url=portal_url(k), default_url=v["url"]) for k, v in PORTAL_INFO.items()},
         "forms": [{"code": f["code"], "label": f["label"], "agency": f["agency"]} for f in td.FORMS],
         "kinds": td.KINDS, "agencies": td.AGENCIES,
@@ -801,12 +818,60 @@ def port_in_use():
         return sk.connect_ex((HOST, PORT)) == 0
 
 
+def stop_old_server():
+    """ปิดโปรแกรมตัวเก่าที่ยังเปิดค้าง (ถ้าเป็นคนละเวอร์ชัน)"""
+    import json
+    try:
+        old = json.loads(SERVER_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        old = None
+    if old and old.get("version") == VERSION:
+        return False                     # ตัวเดียวกัน → ใช้ต่อได้
+    pid = (old or {}).get("pid")
+    killed = False
+    if pid:
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+            else:
+                os.kill(int(pid), 15)
+            killed = True
+        except Exception:
+            pass
+    if not pid and sys.platform.startswith("win"):
+        # ตัวเก่ามาก (ยังไม่มีไฟล์ _server.json) → หา process ที่ใช้พอร์ตนี้
+        try:
+            out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[1].endswith(f":{PORT}") and parts[3].upper() == "LISTENING":
+                    subprocess.run(["taskkill", "/PID", parts[4], "/T", "/F"], capture_output=True)
+                    killed = True
+        except Exception:
+            pass
+    for _ in range(20):
+        if not port_in_use():
+            break
+        time.sleep(0.25)
+    return killed
+
+
 def main():
+    import json
     url = f"http://{HOST}:{PORT}/"
     if port_in_use():
-        print(f"TaxDocs เปิดอยู่แล้ว — กำลังเปิด {url}")
-        webbrowser.open(url)
-        return
+        if stop_old_server() and not port_in_use():
+            print("ปิดโปรแกรมตัวเก่าที่เปิดค้างอยู่แล้ว — กำลังเปิดตัวใหม่")
+        else:
+            if port_in_use():
+                print(f"TaxDocs (เวอร์ชันนี้) เปิดอยู่แล้ว — กำลังเปิด {url}")
+                webbrowser.open(url)
+                return
+    try:
+        SERVER_FILE.write_text(json.dumps({"pid": os.getpid(), "version": VERSION}), encoding="utf-8")
+    except Exception:
+        pass
+    print(f"TaxDocs เวอร์ชัน {VERSION}")
     print(f"TaxDocs Web กำลังทำงานที่ {url}  (ปิดหน้าต่างนี้เพื่อหยุดโปรแกรม)")
     threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     shutil.rmtree(STAGING, ignore_errors=True)

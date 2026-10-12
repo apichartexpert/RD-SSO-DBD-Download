@@ -6,3 +6,4 @@ _staging/
 __pycache__/
 *.pyc
 .venv/
+_server.json
